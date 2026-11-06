@@ -1,0 +1,20 @@
+TITAN QUANT v7.2 — cTrader DEMO y REAL con cuentas separadas
+
+SI YA TIENES LA v7 INSTALADA (actualiza conservando tus datos):
+cd ~ && cp ~/storage/downloads/TITAN_QUANT_v7_2.tar.gz . && tar -xzf TITAN_QUANT_v7_2.tar.gz && bash TITAN_QUANT_v7_2/actualizar_termux.sh
+
+INSTALACIÓN NUEVA:
+termux-setup-storage
+cd ~ && cp ~/storage/downloads/TITAN_QUANT_v7_2.tar.gz . && tar -xzf TITAN_QUANT_v7_2.tar.gz && bash TITAN_QUANT_v7_2/instalar_termux.sh
+
+Luego abre en Chrome del MISMO teléfono: http://127.0.0.1:8765
+
+cTrader:
+1) openapi.ctrader.com → tu app → Redirect URI: http://127.0.0.1:8765/api/tq/integraciones/ctrader/callback
+2) TITAN → Configuración e integraciones → cTrader → Client ID / Secret / Redirect URI → Guardar → Autorizar con cTrader
+   (acepta el permiso de TRADING; la autorización antigua era solo de lectura)
+3) Bot operador → pestaña DEMO → cuenta demo + símbolo (XAUUSD) → Guardar → Iniciar
+4) REAL LIVE solo después de validar en DEMO: frase + contraseña.
+
+Cada pestaña (Simulación / DEMO / REAL) tiene su propia base en datos/cuentas/.
+Solo se comparte el conocimiento del aprendizaje (datos/conocimiento.db).

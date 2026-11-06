@@ -1,0 +1,373 @@
+diff --git a/agente.py b/agente.py
+index 50dd086..26aa6b7 100644
+--- a/agente.py
++++ b/agente.py
+@@ -9,9 +9,7 @@ from datetime import datetime, timedelta, timezone
+ from email.utils import parsedate_to_datetime
+ from html import unescape
+ from pathlib import Path
+-from zoneinfo import ZoneInfo
+ 
+-from activos import buscar
+ 
+ BASE = Path(__file__).resolve().parent
+ DB = BASE / "titan_activos.db"
+diff --git a/api_web.py b/api_web.py
+index c2dbfa2..772acbf 100644
+--- a/api_web.py
++++ b/api_web.py
+@@ -1,23 +1,22 @@
+ 
+ import json
++from contextlib import closing
+ import sqlite3
+-import traceback
+ from pathlib import Path
+ from urllib.parse import urlparse
+ from zoneinfo import ZoneInfo
+-from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
++from http.server import SimpleHTTPRequestHandler
+ 
+ import activos
+ import agente
+ 
+ ROOT = Path(__file__).resolve().parent
+-HTML_DIR = Path(
+-    "/data/data/com.termux/files/home/TITAN_QUANT"
+-)
++# v7: la interfaz vive DENTRO del proyecto (web/). Antes apuntaba a una ruta fija de Termux fuera del backup.
++HTML_DIR = ROOT / "web"
+ DB = ROOT / "titan_activos.db"
+ STATE_FILE = ROOT / ".estado_bot.json"
+ 
+-HOST = "0.0.0.0"
++HOST = "127.0.0.1"   # v7: solo este dispositivo por defecto (antes 0.0.0.0 sin autenticación)
+ PORT = 8765
+ MAX_BODY = 4096
+ 
+@@ -76,7 +75,7 @@ def obtener_activos():
+ 
+ 
+ def obtener_historial():
+-    with conectar_solo_lectura() as c:
++    with closing(conectar_solo_lectura()) as c:   # v7: el 'with' de sqlite3 no cierra la conexión
+         c.row_factory = sqlite3.Row
+         filas = c.execute("""
+             SELECT id, simbolo, creado_en, precio, total,
+@@ -90,7 +89,7 @@ def obtener_historial():
+ 
+ 
+ def obtener_estadisticas():
+-    with conectar_solo_lectura() as c:
++    with closing(conectar_solo_lectura()) as c:   # v7: el 'with' de sqlite3 no cierra la conexión
+         fila = c.execute("""
+             SELECT
+                 COUNT(*) AS total,
+@@ -126,7 +125,7 @@ def obtener_estadisticas():
+ 
+ def obtener_alertas():
+     try:
+-        with conectar_solo_lectura() as c:
++        with closing(conectar_solo_lectura()) as c:   # v7: el 'with' de sqlite3 no cierra la conexión
+             c.row_factory = sqlite3.Row
+             filas = c.execute("""SELECT creado_en, simbolo, tipo, direccion, estado, nivel
+                                  FROM escenarios ORDER BY creado_en DESC LIMIT 30""").fetchall()
+@@ -436,32 +435,7 @@ class Handler(SimpleHTTPRequestHandler):
+ 
+ 
+ if __name__ == "__main__":
+-    if not HTML_DIR.is_dir():
+-        raise SystemExit("No se encuentra el directorio HTML.")
+-
+-    if not DB.is_file():
+-        raise SystemExit("No se encuentra la base de datos.")
+-
+-    print("TITAN_QUANT API")
+-    print("Dirección:", f"http://{HOST}:{PORT}")
+-    print("Directorio web:", HTML_DIR)
+-    print("Base de datos:", DB)
+-    print("Modo: solo loopback; sin órdenes de trading.")
+-    print("Presiona Ctrl+C para detener el servidor.")
+-
+-    try:
+-        import plan_web
+-        plan_web.iniciar_vigilante()
+-        print("Vigilante de planes: activo (titan_planes.db)")
+-    except Exception as e:
+-        print("Vigilante de planes no iniciado:", e)
+-
+-    try:  # LAB_V1
+-        import lab_engine
+-        lab_engine.iniciar()
+-        print("Laboratorio de Aprendizaje: activo (titan_lab.db)")
+-    except Exception as e:
+-        print("Laboratorio no iniciado:", e)
+-
+-    server = ThreadingHTTPServer((HOST, PORT), Handler)
+-    server.serve_forever()
++    # v7: este servidor ya no se ejecuta solo (no tenía autenticación). Arranca el servidor seguro de TITAN QUANT,
++    # que reutiliza todas las rutas de este módulo exigiendo sesión.
++    from titan_quant import servidor
++    servidor.main()
+diff --git a/chart_web.py b/chart_web.py
+index ad2ebd4..b566778 100644
+--- a/chart_web.py
++++ b/chart_web.py
+@@ -5,7 +5,7 @@ import json, time, urllib.parse
+ from concurrent.futures import ThreadPoolExecutor
+ 
+ import agente
+-from quotes_web import ALTERNATIVAS, ETIQUETA
++from quotes_web import ALTERNATIVAS, ETIQUETA, etiqueta
+ 
+ # tf -> (rango completo, intervalo Yahoo, horas por bloque si se agrupa, rango "reciente" para actualizar en vivo)
+ TF = {"1m": ("7d", "1m", 0, "1d"), "5m": ("60d", "5m", 0, "1d"), "15m": ("60d", "15m", 0, "5d"),
+@@ -94,7 +94,7 @@ def grafico(activo, tf, reciente=False):
+     previo = meta.get("chartPreviousClose") or meta.get("previousClose")
+     nf = meta.get("shortName") or meta.get("longName")
+     out = {"simbolo": sim, "nombre": nf if activo.get("categoria") == "Personalizado" and nf else activo["nombre"],
+-           "mostrar": ETIQUETA.get(sim, sim), "tf": tf, "fuente": fuente, "reciente": bool(reciente),
++           "mostrar": etiqueta(sim, fuente), "tf": tf, "fuente": fuente, "reciente": bool(reciente),
+            "velas": [[v[0], _r(v[1]), _r(v[2]), _r(v[3]), _r(v[4]), int(v[5])] for v in velas],
+            "precio": precio, "previo": previo,
+            "cambio_pct": (precio / previo - 1) * 100 if previo else None,
+diff --git a/conectores/ctrader/autenticar_demo.py b/conectores/ctrader/autenticar_demo.py
+index 331671b..423cbc0 100644
+--- a/conectores/ctrader/autenticar_demo.py
++++ b/conectores/ctrader/autenticar_demo.py
+@@ -1,5 +1,4 @@
+ import json
+-import os
+ from pathlib import Path
+ 
+ from twisted.internet import reactor
+diff --git a/informe.py b/informe.py
+index d568898..5eec899 100644
+--- a/informe.py
++++ b/informe.py
+@@ -258,7 +258,7 @@ def pdf(d):
+     unidad = "volumen" if d["con_vol"] else "rango"
+     clave = "vol_x" if d["con_vol"] else "rango_x"
+     fx = lambda x, k: "n/d" if not x or x.get(k) is None else f"{x[k]:.1f}x"
+-    p.tabla([["Sesión", "Apertura (tu hora)", f"Típico apertura", "Última vez", "Cierre (tu hora)", "Típico cierre", "Última vez"]] +
++    p.tabla([["Sesión", "Apertura (tu hora)", "Típico apertura", "Última vez", "Cierre (tu hora)", "Típico cierre", "Última vez"]] +
+             [[s["nombre"], s["apertura"], fx(s["ap"], clave), fx(s["ap"], "ult_" + clave), s["cierre"], fx(s["ci"], clave), fx(s["ci"], "ult_" + clave)]
+              for s in d["sesiones"]], [78, 78, 70, 62, 78, 70, 79])
+     p.parrafo(f"Las cifras son veces el {unidad} promedio de una hora (1.0x = normal; 2.0x = el doble). "
+@@ -287,6 +287,6 @@ def pdf(d):
+     p.seccion("9. CONCLUSIÓN, FUENTES Y LÍMITES")
+     quant.fuentes(p, d)
+     p.parrafo(f"• Sesgo general: {guiado.FRASE[r['direccion']]}. Si a esa hora el precio hace lo que describe el escenario de {e['peso'] if e['peso'] != 'equilibrado' else 'ruptura o rechazo'}, la lectura se confirma; si ocurre lo contrario, descártala.", 9)
+-    p.parrafo(f"• Esta hoja ordena la información disponible (precio, volumen, noticias, contexto); no conoce órdenes grandes, anuncios que aún no salen ni liquidez real.", 9)
++    p.parrafo("• Esta hoja ordena la información disponible (precio, volumen, noticias, contexto); no conoce órdenes grandes, anuncios que aún no salen ni liquidez real.", 9)
+     p.parrafo("• Son hipótesis informativas: no son predicciones ni consejo financiero. Cada una se guarda y se verifica sola cuando pasa la hora (botón de precisión del bot).", 9)
+     return p.construir()
+diff --git a/informe_pro.py b/informe_pro.py
+index 0914960..6218afb 100644
+--- a/informe_pro.py
++++ b/informe_pro.py
+@@ -257,8 +257,8 @@ def escenarios_tecnicos(d):
+     zn = zona.key
+     cond = [
+         [f"Cierre de la vela que rompe {N(nivel)}", "H1", f"Al cierre de la vela {hh}-{base.hour:02d}:59 ({zn}). La mecha por sí sola no cuenta."],
+-        [f"Volumen/rango de la vela ≥ umbral", "H1", e["umbral"]],
+-        ["Retest del nivel roto, sin cierre de vuelta", "M15 (detalle en M5)", f"En las 1 o 2 horas siguientes a la ruptura; se busca que el nivel invertido aguante."],
++        ["Volumen/rango de la vela ≥ umbral", "H1", e["umbral"]],
++        ["Retest del nivel roto, sin cierre de vuelta", "M15 (detalle en M5)", "En las 1 o 2 horas siguientes a la ruptura; se busca que el nivel invertido aguante."],
+         ["Rechazo: mecha larga y cierre del lado contrario", "H1 (detalle en M15)", f"En la vela de las {hh} o en la siguiente."],
+         ["Línea de tendencia / canal se mantiene", "H1 y H4", "Mientras ningún cierre H1 salga del canal de ±2 desviaciones."],
+         ["Contexto de fondo", "D1", f"Tendencia diaria {r.get('diaria') or 'sin dato'}: si contradice el escenario, las probabilidades de que se cumpla son menores."],
+diff --git a/iqoption_data.py b/iqoption_data.py
+index 261d996..aad8a75 100644
+--- a/iqoption_data.py
++++ b/iqoption_data.py
+@@ -39,7 +39,13 @@ RANGES = {'1d':86400,'5d':5*86400,'7d':7*86400,'1mo':30*86400,'3mo':90*86400,
+           '6mo':180*86400,'1y':365*86400,'2y':730*86400,'60d':60*86400,
+           '730d':730*86400,'max':3650*86400}
+ 
++# TITAN v7: las credenciales pueden venir de la bóveda cifrada (trader/iqoption.py las asigna aquí en memoria).
++CREDENCIALES = None
++
++
+ def _credentials():
++    if CREDENCIALES and CREDENCIALES.get('correo') and CREDENCIALES.get('clave'):
++        return CREDENCIALES['correo'], CREDENCIALES['clave']
+     vals = {}
+     if ENV_FILE.exists():
+         for line in ENV_FILE.read_text(encoding='utf-8').splitlines():
+diff --git a/lab_engine.py b/lab_engine.py
+index 9a87168..50302b9 100644
+--- a/lab_engine.py
++++ b/lab_engine.py
+@@ -112,6 +112,13 @@ def init_db():
+     with _L:
+         c = _con()
+         c.executescript(SCHEMA)
++        # Reparación v7: filas de latido creadas con nombre=timestamp por el error de argumentos invertidos.
++        # Son latidos técnicos (no historial de usuario); se conserva un recuento en lab_aprendizaje.
++        n = c.execute("SELECT COUNT(*) FROM lab_procesos WHERE nombre GLOB '[0-9]*'").fetchone()[0]
++        if n:
++            c.execute("DELETE FROM lab_procesos WHERE nombre GLOB '[0-9]*'")
++            c.execute("INSERT INTO lab_aprendizaje(ts,tipo,texto) VALUES(?,?,?)",
++                      (_ahora(), "mantenimiento", "Reparación v7: eliminadas %d filas de latido corruptas en lab_procesos" % n))
+         c.commit()
+         c.close()
+     modelo_activo()
+@@ -128,7 +135,7 @@ def _latido(nombre, error=None, detalle=None):
+     _w("""INSERT INTO lab_procesos(nombre,ultimo_ts,ciclos,ultimo_error,detalle) VALUES(?,?,1,?,?)
+           ON CONFLICT(nombre) DO UPDATE SET ultimo_ts=excluded.ultimo_ts, ciclos=ciclos+1,
+           ultimo_error=COALESCE(excluded.ultimo_error, ultimo_error), detalle=COALESCE(excluded.detalle, detalle)""",
+-       (_ahora(), nombre, error, detalle))
++       (nombre, _ahora(), error, detalle))
+ 
+ 
+ def _aprende(tipo, texto):
+@@ -1073,7 +1080,7 @@ def manejar_post(h, ruta):
+ 
+ # ============================================================================ autoprueba (datos sinteticos, BD temporal, sin red)
+ def _autoprueba():
+-    import os, random, tempfile
++    import random, tempfile
+     global DB
+     tmp = Path(tempfile.mkdtemp(prefix="titan_lab_test_"))
+     DB = tmp / "lab_test.db"
+diff --git a/plan_web.py b/plan_web.py
+index e48dc30..a7e72b8 100644
+--- a/plan_web.py
++++ b/plan_web.py
+@@ -16,7 +16,6 @@ from zoneinfo import ZoneInfo
+ 
+ import agente
+ import chart_web
+-from quotes_web import ETIQUETA
+ 
+ DB = Path(__file__).resolve().parent / "titan_planes.db"
+ _DBLOCK = threading.Lock()
+diff --git a/probar.py b/probar.py
+index 086ba76..74a142d 100755
+--- a/probar.py
++++ b/probar.py
+@@ -163,8 +163,8 @@ chequea("marcar activos los guarda", b.cargar()["seleccion"] == ["BTC-USD", "GC=
+ boton(123, "a:1:BTC-USD")
+ chequea("tocar de nuevo lo quita", b.cargar()["seleccion"] == ["GC=F"])
+ boton(123, "a:1:BTC-USD")
+-enviados.clear(); texto(123, "/agregar AMD")
+-chequea("/agregar valida el símbolo y lo marca", "AMD" in b.cargar()["personalizados"] and "AMD" in b.cargar()["seleccion"], msgs())
++enviados.clear(); texto(123, "/agregar DOGE-USD")
++chequea("/agregar valida el símbolo y lo marca", "DOGE-USD" in b.cargar()["personalizados"] and "DOGE-USD" in b.cargar()["seleccion"], msgs())
+ enviados.clear(); texto(123, "/agregar $$$")
+ chequea("/agregar con símbolo inválido da instrucciones", "Uso:" in msgs()[0]["text"])
+ e = b.cargar(); e["seleccion"] = ["BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "AAPL", "TSLA", "NVDA", "MSFT"]; b.guardar(e)
+@@ -226,7 +226,7 @@ chequea("'Próxima hora' también funciona", any("Resumen previo" in m["text"] f
+ enviados.clear(); boton(123, "gd:BTC-USD")
+ chequea("'Análisis completo' muestra el análisis detallado", any("Hipótesis (4 h)" in m["text"] for m in msgs()))
+ e = b.cargar(); e["personalizados"] = []; b.guardar(e)
+-enviados.clear(); boton(123, "gc:4")
++enviados.clear(); boton(123, "gc:%d" % act.CATEGORIAS.index("Personalizado"))
+ chequea("categoría personalizada vacía explica /agregar", any("/agregar" in m["text"] for m in msgs()))
+ enviados.clear(); boton(123, "prec")
+ chequea("Precisión incluye los pronósticos por hora", "Pronósticos por hora" in msgs()[0]["text"])
+@@ -322,7 +322,7 @@ chequea("al guardar la zona se confirma y se quitan los botones", ed and ed[0]["
+ e = b.cargar(); e["zona"] = "America/Santo_Domingo"; b.guardar(e)
+ 
+ print("\n[9] TITAN QUANT: zonas del mundo, riesgo, vigilancia, alertas y explicación")
+-import zonas, escenarios as E, monitor, macro, quant
++import zonas, escenarios as E, monitor, quant
+ chequea("el informe incluye TITAN QUANT sin errores", d["quant"].get("error") is None and len(d["quant"]["escenarios"]) == 5, d["quant"].get("error"))
+ contenido = b"".join(zlib.decompress(m) for m in re.findall(rb"stream\n(.*?)\nendstream", informe.pdf(d), re.S)).decode("cp1252")
+ chequea("el PDF trae las secciones nuevas", all(k in contenido for k in ("PAS", "MACRO, GOBIERNOS", "ESCENARIOS, STOP-LOSS", "FUENTES Y L", "Fuente de datos")))
+diff --git a/progreso_titan.py b/progreso_titan.py
+index 7095e2f..7b7a114 100644
+--- a/progreso_titan.py
++++ b/progreso_titan.py
+@@ -1,5 +1,4 @@
+ from datetime import datetime
+-import sys
+ 
+ def progreso(porcentaje, mensaje, estado="EN PROCESO"):
+     porcentaje = max(0, min(100, int(porcentaje)))
+diff --git a/quotes_web.py b/quotes_web.py
+index 54d56bc..8dbf17e 100644
+--- a/quotes_web.py
++++ b/quotes_web.py
+@@ -10,6 +10,13 @@ CACHE_S = 3
+ # Para mostrar XAU/USD (oro spot) se intenta primero XAUUSD=X y, si falla, se usa GC=F (futuros).
+ ALTERNATIVAS = {"GC=F": ["XAUUSD=X", "GC=F"]}
+ ETIQUETA = {"GC=F": "XAU/USD"}
++
++
++def etiqueta(sim, fuente=None):
++    """Nombre a mostrar según la fuente REAL: si el oro sale de GC=F son futuros, no XAU/USD spot."""
++    if sim == "GC=F" and fuente and fuente != "XAUUSD=X":
++        return "Oro futuros (GC=F)"
++    return ETIQUETA.get(sim, sim)
+ _CACHE = {}
+ 
+ 
+@@ -50,6 +57,7 @@ def cotizar(activo):
+         base["error"] = ultimo_error
+     else:
+         base.update(out)
++        base["mostrar"] = etiqueta(sim, out.get("fuente"))
+     _CACHE[sim] = (ahora, base)
+     return base
+ 
+diff --git a/telegram_bot.py b/telegram_bot.py
+index 25f1fd4..4f52c6e 100644
+--- a/telegram_bot.py
++++ b/telegram_bot.py
+@@ -12,6 +12,16 @@ def _leer_token():
+     t = os.environ.get("TELEGRAM_TOKEN", "").strip()
+     if not t and (BASE / ".telegram_token").exists():
+         t = (BASE / ".telegram_token").read_text().strip()
++    if not t:  # v7: token cifrado en la bóveda de TITAN QUANT (Integraciones → Telegram)
++        try:
++            from titan_quant.motores.sistema import _credenciales_telegram
++            t, chat, _ = _credenciales_telegram()
++            t = t or ""
++            if t and chat and not (BASE / ".telegram_chat").exists():
++                (BASE / ".telegram_chat").write_text(str(chat))
++                os.chmod(BASE / ".telegram_chat", 0o600)
++        except Exception:
++            t = ""
+     if not t:
+         raise SystemExit("Falta el token: guárdalo en .telegram_token (una sola línea) o define TELEGRAM_TOKEN.")
+     return t
+diff --git a/titan_bot.py b/titan_bot.py
+index ce89269..6abe899 100644
+--- a/titan_bot.py
++++ b/titan_bot.py
+@@ -67,15 +67,6 @@ def menu_horas(e):
+     filas.append([{"text": "⬅️ Volver", "callback_data": "menu"}])
+     return {"inline_keyboard": filas}
+ 
+-def menu_zonas():
+-    filas = [[{"text": n, "callback_data": "z:" + tz}] for n, tz in ZONAS]
+-    filas.append([{"text": "⬅️ Volver", "callback_data": "menu"}])
+-    return {"inline_keyboard": filas}
+-
+-def refrescar_menus(e):
+-    tb.MENU = menu(e)
+-    tb.MENU_RES = {"inline_keyboard": [[{"text": "📄 Ver detalle completo", "callback_data": "detalle"}]] + tb.MENU["inline_keyboard"]}
+-
+ def texto_estado(e):
+     horas = ", ".join(sorted(e["horas"])) or "ninguna"
+     return ("Estado del bot\n"
+@@ -310,15 +301,6 @@ def zona_flujo(e, idx):
+         return ZONAS[int(idx)][1]
+     return idx if zonas.valida(idx) else (e["zona"] or "America/Santo_Domingo")
+ 
+-def menu_flujo_zonas(sim, e):
+-    filas = []
+-    if e["zona"]:
+-        filas.append([{"text": "📍 Mi zona: " + e["zona"], "callback_data": f"gz:{sim}:g"}])
+-    for i, (n, tz) in enumerate(ZONAS):
+-        filas.append([{"text": n, "callback_data": f"gz:{sim}:{i}"}])
+-    filas.append([{"text": "⬅️ Categorías", "callback_data": "ga"}])
+-    return {"inline_keyboard": filas}
+-
+ def menu_flujo_horas(sim, idx):
+     filas = [[{"text": "⏱ Próxima hora", "callback_data": f"gh:{sim}:{idx}:N"}]]
+     fila = []
+
+# web/index.html: solo se añadieron 3 etiquetas: <link href="tq.css">, <script src="tq_auth.js"> en <head> y <script src="tq_app.js"> al final.
