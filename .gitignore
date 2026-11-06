@@ -5,9 +5,11 @@
 *.db-wal
 *.db-shm
 datos/
-.env
 *.env
-*token*
-*secret*
-*oauth*
+.env
+.telegram_token
+.telegram_chat
+.iqoption.env
+ctrader_app.json
+oauth_tokens.json
 *.log
