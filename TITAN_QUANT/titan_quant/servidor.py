@@ -264,6 +264,83 @@ def p_interruptores(h, d):
     _rq(False, "Acción no válida.")
 
 
+# ============================================================================ C2–C9: brokers, servidores, cerebro, cuántico
+def g_brokers(h, q):
+    u = h.requerir()["usuario"]
+    from .brokers import centro
+    if q.get("actividad"):
+        return {"ok": True, "actividad": centro.actividad(u["id"], q["actividad"], 80)}
+    return {"ok": True, "brokers": centro.panel(u["id"]),
+            "nota": "Matriz verificada en vivo el día indicado. Un conector solo figura conectado tras una prueba real con el broker."}
+
+
+def p_brokers(h, d):
+    u = h.requerir()["usuario"]
+    from .brokers import centro
+    acc, b = d.get("accion"), str(d.get("broker") or "")
+    if acc == "guardar":
+        if d.get("credenciales"):
+            h.requerir(propietario=True)
+        a = centro.guardar(u["id"], b, d.get("habilitado"), d.get("entorno"), d.get("credenciales"), d.get("sync_min"), d.get("riesgo_max_pct"))
+        r = {"ok": True, "ajustes": a}
+        if d.get("habilitado") or d.get("credenciales"):
+            r["prueba"] = centro.diagnosticar(u["id"], b)
+        return r
+    if acc == "probar":
+        return {"ok": True, "prueba": centro.diagnosticar(u["id"], b)}
+    if acc == "sincronizar":
+        return {"ok": True, "sync": centro.sincronizar(u["id"], b)}
+    if acc == "orden_prueba":
+        h.requerir(propietario=True)
+        return {"ok": True, "orden": centro.orden_prueba_demo(u["id"], b, str(d.get("simbolo")), str(d.get("lado")), float(d.get("cantidad")),
+                                                              d.get("stop"), d.get("objetivo"))}
+    _rq(False, "Acción no válida.")
+
+
+def g_servidores(h, q):
+    u = h.requerir()["usuario"]
+    from . import servidores
+    if q.get("id"):
+        return {"ok": True, "detalle": servidores.detalle(u["id"], q["id"])}
+    return {"ok": True, **servidores.centro(u["id"])}
+
+
+def p_servidores(h, d):
+    u = h.requerir(propietario=True)["usuario"]
+    from . import supervisor
+    return {"ok": True, **supervisor.controlar(str(d.get("proceso")), str(d.get("accion")), u["id"])}
+
+
+def g_cerebro(h, q):
+    h.requerir()
+    from .ia import cerebro
+    return {"ok": True, **cerebro.informe(), "estado": cerebro.ESTADO}
+
+
+def p_cerebro(h, d):
+    u = h.requerir(propietario=True)["usuario"]
+    from .ia import cerebro
+    if d.get("accion") == "ejecutar":
+        return {"ok": True, "ciclo": cerebro.ciclo()}
+    if d.get("accion") == "revertir":
+        return {"ok": cerebro.revertir(int(d.get("id")), u["id"])}
+    _rq(False, "Acción no válida.")
+
+
+def g_cuantico(h, q):
+    h.requerir()
+    from .cuantico import laboratorio
+    return {"ok": True, "historial": laboratorio.historial(20), "nota": "Laboratorio EXPERIMENTAL: simulación clásica exacta de circuitos; sin ventaja cuántica atribuida."}
+
+
+def p_cuantico(h, d):
+    h.requerir()
+    from .cuantico import laboratorio
+    if d.get("experimento") == "amplitud":
+        return {"ok": True, "resultado": laboratorio.experimento_amplitud(max(3, min(10, int(d.get("m") or 7))))}
+    return {"ok": True, "resultado": laboratorio.experimento_cartera(max(1, min(5, int(d.get("k") or 3))), max(1, min(5, int(d.get("capas") or 3))))}
+
+
 # ============================================================================ centro de noticias
 def g_noticias(h, q):
     """Noticias recopiladas y analizadas (titular, resumen breve, enlace a la fuente original y puntuaciones)."""
@@ -328,7 +405,8 @@ def g_noticias_calendario(h, q):
     dias = max(1, min(14, int(q.get("dias") or 7)))
     imp = [x for x in (q.get("impacto") or "").split(",") if x]
     ahora = int(time.time())
-    return {"ok": True, "eventos": calendario.eventos(ahora - 86400, ahora + dias * 86400, imp or None),
+    from .noticias import oficiales
+    return {"ok": True, "eventos": calendario.eventos(ahora - 86400, ahora + dias * 86400, imp or None), "oficiales": oficiales.ultimos(),
             "alertas": calendario.alertas_proximas(), "config_alertas": calendario.config_alertas(),
             "nota": "Fuente secundaria pública (hora, impacto, previsión y anterior). El dato publicado no lo trae: no se inventa."}
 
@@ -539,6 +617,7 @@ RUTAS_GET = {
     "/api/tq/backtest": g_backtest, "/api/tq/escaner": g_escaner, "/api/tq/backtest/informe": g_backtest_informe,
     "/api/tq/noticias": g_noticias, "/api/tq/noticias/fuentes": g_noticias_fuentes, "/api/tq/noticias/calendario": g_noticias_calendario,
     "/api/tq/noticias/estado": g_noticias_estado, "/api/tq/seguridad/interruptores": g_interruptores,
+    "/api/tq/brokers": g_brokers, "/api/tq/servidores": g_servidores, "/api/tq/cerebro": g_cerebro, "/api/tq/cuantico": g_cuantico,
     "/api/tq/operador/decisiones": g_decisiones,
     "/api/tq/ctrader/cuentas": g_ctrader_cuentas, "/api/tq/ctrader/simbolos": g_ctrader_simbolos, "/api/tq/diagnostico": g_diagnostico,
 }
@@ -914,7 +993,8 @@ RUTAS_POST = {
     "/api/tq/historial/restaurar": lambda h, d: p_historial(h, d, "visible"), "/api/tq/historial/eliminar_permanente": p_historial_eliminar,
     "/api/tq/operador/ajustes": p_op_ajustes, "/api/tq/operador/estado": p_op_estado, "/api/tq/operador/ciclo": p_op_ciclo,
     "/api/tq/operador/real": p_op_real, "/api/tq/operador/restablecer": p_op_restablecer, "/api/tq/operador/conciliar": p_op_conciliar, "/api/tq/operador/live": p_op_live, "/api/tq/operador/exploracion": p_op_exploracion,
-    "/api/tq/noticias/fuente": p_noticias_fuente, "/api/tq/seguridad/interruptores": p_interruptores, "/api/tq/noticias/alertas": p_noticias_alertas,
+    "/api/tq/noticias/fuente": p_noticias_fuente, "/api/tq/seguridad/interruptores": p_interruptores,
+    "/api/tq/brokers": p_brokers, "/api/tq/servidores": p_servidores, "/api/tq/cerebro": p_cerebro, "/api/tq/cuantico": p_cuantico, "/api/tq/noticias/alertas": p_noticias_alertas,
     "/api/tq/backtest/recopilar": p_backtest_recopilar, "/api/tq/backtest/ejecutar": p_backtest_ejecutar,
     "/api/admin/config": p_admin_config, "/api/admin/correo_prueba": p_admin_correo_prueba,
     **{f"/api/admin/{a}": (lambda h, d, a=a: p_admin(h, d, a)) for a in
@@ -1194,6 +1274,13 @@ def main():
         print("  · Centro de noticias (fuentes oficiales, medios, cripto y calendario): activo")
     except Exception as e:
         print("  · Centro de noticias no iniciado:", type(e).__name__)
+    for nombre, arrancar in (("Sincronización de brokers", "brokers.centro"), ("Cerebro autónomo", "ia.cerebro"), ("Supervisor de procesos", "supervisor")):
+        try:
+            import importlib
+            importlib.import_module("titan_quant." + arrancar).iniciar()
+            print(f"  · {nombre}: activo")
+        except Exception as e:
+            print(f"  · {nombre} no iniciado:", type(e).__name__)
     print("  Ctrl+C para detener.")
     try:
         srv.serve_forever()

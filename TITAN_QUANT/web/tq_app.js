@@ -125,9 +125,9 @@
   TQ.alCaducar = () => { TQ.usuario = null; pantalla('login', '<div class="tq-msg err">Tu sesión terminó. Vuelve a iniciar sesión.</div>'); };
 
   // =========================================================================== MONTAJE EN LA INTERFAZ EXISTENTE
-  const NUEVAS = [['bot_ctrader', '⇄ Bot cTrader'], ['bot_iq', '⇄ Bot IQ Option'], ['noticias', '📰 Noticias'], ['motores', '⚙ Motores (23)'], ['inteligencia', '◇ Inteligencia'], ['hardware', '▤ Hardware'], ['diagnostico', '✚ Diagnóstico'], ['admin', '★ Administración']];
+  const NUEVAS = [['bot_ctrader', '⇄ Bot cTrader'], ['bot_iq', '⇄ Bot IQ Option'], ['servidores', '▦ Servidores'], ['brokers_centro', '⇆ Brokers'], ['cerebro', '✦ IA y cuántico'], ['noticias', '📰 Noticias'], ['motores', '⚙ Motores (23)'], ['inteligencia', '◇ Inteligencia'], ['hardware', '▤ Hardware'], ['diagnostico', '✚ Diagnóstico'], ['admin', '★ Administración']];
   const RENOMBRAR = { brokers: '▣ Configuración e integraciones', settings: '⚙ Preferencias', analysis: '◈ Analizar mercado' };
-  const TITULOS = { noticias: 'Inteligencia de noticias', admin: 'Administración', motores: 'Motores', inteligencia: 'Inteligencia', hardware: 'Hardware', diagnostico: 'Diagnóstico', brokers: 'Configuración e integraciones', settings: 'Preferencias', analysis: 'Analizar mercado' };
+  const TITULOS = { servidores: 'Centro de servidores', brokers_centro: 'Centro de brokers', cerebro: 'Inteligencia autónoma', noticias: 'Inteligencia de noticias', admin: 'Administración', motores: 'Motores', inteligencia: 'Inteligencia', hardware: 'Hardware', diagnostico: 'Diagnóstico', brokers: 'Configuración e integraciones', settings: 'Preferencias', analysis: 'Analizar mercado' };
   const RENDER = {};
 
   // Barra superior FIJA (estilo «Centro de Inteligencia Global»): marca, un botón por módulo y estado de los bots.
@@ -182,7 +182,7 @@
            <button class="btn" id="sgPara" style="margin-top:10px;background:#5a1515;border-color:#a33;color:#fff;font-weight:700">⛔ ACTIVAR PARADA TOTAL</button>`}</div>
       <table class="tq-table"><tr><th>Broker</th><th>Estado</th><th></th></tr>${Object.entries(s.brokers).map(([k, b]) => `<tr><td><b>${esc(s.nombres[k])}</b></td>
         <td>${b.bloqueado ? badge('BLOQUEADO', 'err') + `<div class="muted" style="font-size:11px">${esc(b.motivo || '')} · origen ${esc(b.por || '')}</div>` : badge('habilitado', 'ok')}</td>
-        <td>${b.bloqueado ? `<button class="btn" data-des="${k}">Desbloquear</button>` : `<button class="btn" data-blq="${k}">Bloquear</button>`}</td></tr>`).join('')}</table>
+        <td><input type="checkbox" data-bsw="${k}" ${b.bloqueado ? '' : 'checked'} title="ON = habilitado · OFF = bloqueado"></td></tr>`).join('')}</table>
       <div id="sgMsg"></div><div style="text-align:right;margin-top:12px"><button class="btn" id="sgCerrarP">Cerrar</button></div></div>`;
     document.body.appendChild(fondo);
     const cerrar = () => { fondo.remove(); estadoSeguridad(); };
@@ -195,8 +195,11 @@
       hacer({ accion: 'parada_total', motivo: $('sgMot').value, cerrar_posiciones: c });
     };
     if ($('sgRe')) $('sgRe').onclick = () => { const clave = prompt('Contraseña de TITAN para levantar la PARADA TOTAL:'); if (clave) hacer({ accion: 'reanudar', clave }); };
-    fondo.querySelectorAll('[data-blq]').forEach(b => b.onclick = () => { const mot = prompt('Motivo del bloqueo de ' + s.nombres[b.dataset.blq] + ':', 'revisión manual'); if (mot !== null) hacer({ accion: 'bloquear_broker', broker: b.dataset.blq, motivo: mot }); });
-    fondo.querySelectorAll('[data-des]').forEach(b => b.onclick = () => { const clave = prompt('Contraseña de TITAN para desbloquear ' + s.nombres[b.dataset.des] + ':'); if (clave) hacer({ accion: 'desbloquear_broker', broker: b.dataset.des, clave }); });
+    fondo.querySelectorAll('input[data-bsw]').forEach(i => i.onchange = () => {
+      const k = i.dataset.bsw;
+      if (!i.checked) { const mot = prompt('Motivo del bloqueo de ' + s.nombres[k] + ':', 'revisión manual'); if (mot === null) { i.checked = true; return; } hacer({ accion: 'bloquear_broker', broker: k, motivo: mot }); }
+      else { const clave = prompt('Contraseña de TITAN para desbloquear ' + s.nombres[k] + ':'); if (!clave) { i.checked = false; return; } hacer({ accion: 'desbloquear_broker', broker: k, clave }); }
+    });
   }
 
   function montar() {
@@ -468,6 +471,14 @@
   };
 
   // =========================================================================== HARDWARE
+  ['servidores', 'brokers_centro', 'cerebro'].forEach(n => {
+    RENDER[n] = function () {
+      const v = $('view-' + n);
+      if (window.TQCentro) window.TQCentro.render(n, v, { api, esc, num, fecha, badge, cargando, admin: !!TQ.usuario.admin });
+      else v.innerHTML = '<div class="tq-msg err">No se cargó el módulo tq_centro.js.</div>';
+    };
+  });
+
   RENDER.noticias = function () {
     const v = $('view-noticias');
     if (window.TQNoticias) window.TQNoticias.render(v, { api, esc, num, fecha, badge, cargando, admin: !!TQ.usuario.admin });

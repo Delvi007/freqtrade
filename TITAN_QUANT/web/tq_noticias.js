@@ -111,6 +111,10 @@
           <label>Avisar <input class="field" name="minutos_antes" type="number" min="1" max="1440" value="${c.minutos_antes}" style="width:80px"> min antes</label>
           <label>Monedas <input class="field" name="monedas" value="${esc((c.monedas || []).join(','))}" placeholder="todas (o USD,EUR…)" style="width:170px"></label>
           <button class="btn primary">Guardar</button><span id="tqnAlM"></span></form></div>
+        ${(d.oficiales || []).length ? `<div class="card" style="margin-top:12px"><b>Últimos datos OFICIALES publicados</b> <span class="muted">(fuente primaria: U.S. Bureau of Labor Statistics)</span>
+          <table class="tq-table"><tr><th>Indicador</th><th>Periodo</th><th>Valor</th><th>Variación mensual</th><th>Variación anual</th></tr>${d.oficiales.map(o => `<tr><td>${esc(o.nombre)}${o.preliminar ? ' <span class="muted">(preliminar)</span>' : ''}</td>
+          <td>${esc(o.periodo)}</td><td>${H.num(o.valor, 3)}</td><td>${o.var_mensual == null ? '—' : H.num(o.var_mensual, 2) + (o.serie.startsWith('CU') ? ' %' : o.serie === 'LNS14000000' ? ' pp' : '')}</td>
+          <td>${o.var_anual == null ? '—' : H.num(o.var_anual, 2) + (o.serie === 'LNS14000000' ? ' pp' : ' %')}</td></tr>`).join('')}</table></div>` : ''}
         <div class="card" style="margin-top:12px"><div class="muted" style="margin-bottom:8px">${esc(d.nota)}</div><div class="tq-scroll"><table class="tq-table">
           <tr><th>Hora</th><th>Moneda</th><th>Impacto</th><th>Evento</th><th>Previsión</th><th>Anterior</th></tr>${filas || '<tr><td colspan="6" class="muted">Sin eventos.</td></tr>'}</table></div></div>`;
       document.getElementById('tqnAl').onsubmit = async ev => { ev.preventDefault(); const f = ev.target;
@@ -149,7 +153,7 @@
             <td>${f.ultima_ok_ts ? 'hace ' + hace(f.ultima_ok_ts) : '—'}<div class="muted" style="font-size:11px">${f.ultima_latencia_ms != null ? num(f.ultima_latencia_ms, 0) + ' ms' : ''}${f.items_ultima != null ? ' · ' + f.items_ultima + ' elementos' : ''}</div></td>
             <td>${num(f.noticias_24h, 0)}</td><td>${f.frecuencia_min} min</td>
             ${adm ? `<td style="white-space:nowrap">${f.acceso === 'sin_rss_publico' || f.acceso === 'bloqueado' ? '' : `<button class="btn" data-a="probar" data-id="${esc(f.id)}">Probar</button>
-              <button class="btn" data-a="${f.activo ? 'desactivar' : 'activar'}" data-id="${esc(f.id)}">${f.activo ? 'Desactivar' : 'Activar'}</button>
+              <input type="checkbox" data-fsw="${esc(f.id)}" ${f.activo ? 'checked' : ''} title="Activar / desactivar la fuente">
               <button class="btn" data-a="editar" data-id="${esc(f.id)}">Editar</button>`}${f.personalizada ? ` <button class="btn" data-a="eliminar" data-id="${esc(f.id)}">Eliminar</button>` : ''}</td>` : ''}</tr>`).join('')}
           </table></div></div>`).join('')}`;
       const nueva = document.getElementById('tqnNueva');
@@ -158,6 +162,9 @@
             idioma: f.idioma.value, palabras_clave: f.palabras_clave.value, primaria: f.primaria.checked });
           m.innerHTML = r.prueba.ok ? badge('conectada: ' + r.prueba.detalle, 'ok') : badge('añadida, pero la prueba falló: ' + r.prueba.detalle, 'warn'); setTimeout(() => fuentes(el), 2500);
         } catch (e) { m.innerHTML = badge(e.message, 'err'); } };
+      el.querySelectorAll('input[data-fsw]').forEach(i => i.onchange = async () => {
+        try { await api('/api/tq/noticias/fuente', { accion: i.checked ? 'activar' : 'desactivar', id: i.dataset.fsw }); } catch (e) { alert(e.message); i.checked = !i.checked; }
+      });
       el.querySelectorAll('button[data-a]').forEach(b => b.onclick = async () => {
         const id = b.dataset.id, a = b.dataset.a;
         const f = d.fuentes.find(x => x.id === id);

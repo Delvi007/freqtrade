@@ -11,6 +11,19 @@ Detalle completo, pruebas y limitaciones: `docs/INFORME_RETIRO_SIMULACION.md`.
 - Ruta de órdenes con dinero real: bloqueada por código (autotrader y adaptador cTrader en LIVE).
 
 ### Añadido
+- **Orden maestra C2–C9** (`docs/PLATAFORMA_AVANZADA.md`):
+  - **C2:** matriz de 25 brokers/plataformas verificada en vivo.
+  - **C3:** conectores OANDA, Alpaca y Tradier (implementados), Kraken y Coinbase (datos públicos verificados; firma de Kraken comprobada con el vector oficial).
+  - **C4:** centro de brokers con interruptor ON/OFF, DEMO/REAL (REAL de solo lectura), credenciales en la bóveda, diagnóstico, registro de actividad y sincronización sin duplicados (posiciones, órdenes, ejecuciones con comisiones/swaps/parciales).
+  - **C5:** biblioteca científica en numpy (bayes, GARCH, HMM, Kalman, OU, Hurst, entropías, Ledoit-Wolf, paridad de riesgo, CVaR, Kelly, CUSUM, Merton, logística walk-forward).
+  - **C6:** cerebro autónomo bayesiano con decisiones trazables y reversibles (bloquea solo en práctica; en REAL solo recomienda; no toca protecciones).
+  - **C7:** laboratorio cuántico experimental (QAOA, VQE y QAE con simulador propio y datos reales; sin ventaja atribuida).
+  - **C8:** centro de servidores con racks de 5 LED de estado real y panel técnico al hacer doble clic.
+  - **C9:** supervisor con prioridades, métricas reales con psutil, reinicio automático y gestión de carga.
+- **Interruptor universal:** verde ON / rojo OFF con la indicación encima, en toda la plataforma.
+- **Noticias fase 2:** datos oficiales del BLS, alertas del calendario y de noticias urgentes en la campana y Telegram, y léxico en español.
+- **Pruebas de rendimiento:** `python -m titan_quant.rendimiento`.
+- **Pruebas:** 33 nuevas (426 + 159, todas correctas).
 - **C10 · Seguridad** (`titan_quant/seguridad/interruptores.py`): botón **⛔ PARADA TOTAL** en la barra superior (bloquea toda orden nueva a todos los brokers, detiene los 4 bots y opcionalmente pide el cierre de todas las posiciones) e **interruptor por broker** (cTrader, IQ Option). Detener: siempre permitido; reanudar/desbloquear: solo el usuario, con contraseña y desde el propio dispositivo — cualquier origen automático (IA, sistema, bot) recibe PermissionError. Comprobación en el ciclo, en los controles de cada orden y de nuevo en el punto único de envío (defensa en profundidad). Protección automática: 3 órdenes sin confirmar en 30 min bloquean el broker (solo el usuario lo desbloquea). Ajustes de riesgo PROTEGIDOS que un proceso automático no puede cambiar y MODO LIVE que solo enciende el usuario (y nunca con la parada activa). Banner rojo, alerta crítica y auditoría de cada acción. 7 pruebas nuevas.
 - **C1 · Auditoría** (`docs/AUDITORIA_C1.md`) y copia de seguridad verificada (`../RESPALDO_20261109_C1_auditoria/`).
 - **Inteligencia de noticias** (`titan_quant/noticias/`, módulo 📰 Noticias, `docs/NOTICIAS.md`): 42 fuentes catalogadas (31 conectadas y probadas en vivo el 09/11/2026: Fed, BCE, BoE, BoJ, BoC, RBA, RBNZ, SNB, BLS, SEC, CFTC, FINRA, ESMA, FCA, CME, Bloomberg/FT/WSJ/Economist solo titulares, CNBC, MarketWatch, Nasdaq, Investing, CoinDesk, The Block, Decrypt, Cointelegraph, Bitcoin Magazine y calendario semanal), y no disponibles documentadas (Reuters, FMI, OCDE, Banco Mundial, Barron's, BEA y Yahoo por robots.txt). Calificación interna de 1 a 6 estrellas por 10 criterios; recopilación con ETag, robots.txt, frecuencia mínima, reintentos y protección SSRF; deduplicación entre fuentes con confirmación; análisis de categoría, entidades, sentimiento, tono monetario, rumores, urgencia, sorpresa frente a la previsión y 6 puntuaciones; calendario económico con alertas; entrega de noticias verificadas a los motores 6 (MACRO) y 11 (NEWS) con registro de uso; panel con configuración de fuentes. 18 pruebas nuevas.

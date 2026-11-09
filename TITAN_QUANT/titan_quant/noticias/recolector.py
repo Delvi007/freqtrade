@@ -396,12 +396,46 @@ ESTADO = {"vivo": False, "rondas": 0, "ultima_ronda_ts": None, "ultima_duracion_
 _PARAR = threading.Event()
 
 
+def alertar(ahora=None):
+    """Alertas en la campana (y Telegram según preferencias): eventos de calendario en la ventana de aviso y noticias
+    URGENTES y VERIFICADAS de alto impacto. Sin duplicados (clave por evento / acontecimiento)."""
+    from .. import alertas, db
+    from . import calendario
+    ahora = int(ahora or time.time())
+    usuarios = [u["id"] for u in db.q("SELECT id FROM usuarios")]
+    n = 0
+    for e in calendario.alertas_proximas(ahora):
+        mins = int((e["ts"] - ahora) / 60)
+        for uid in usuarios:
+            n += bool(alertas.crear(uid, "macro", f"{e['moneda']} · {e['titulo']}", "alta" if e["impacto"] == "alto" else "media",
+                                    justificacion=(f"en {mins} min" if mins >= 0 else f"hace {-mins} min") + f" · impacto {e['impacto']} · previsión "
+                                    f"{e['prevision'] or '—'} · anterior {e['anterior'] or '—'} (calendario, fuente secundaria)",
+                                    clave_dedupe=f"cal|{e['id']}"))
+    for r in almacen.q("""SELECT n.titulo, n.grupo_id, n.enlace, f.nombre fuente, n.puntuaciones FROM noticias n JOIN fuentes f ON f.id=n.fuente_id
+                          WHERE n.urgente=1 AND n.verificada=1 AND n.recogida_ts>=?""", (ahora - 900,)):
+        if json.loads(r["puntuaciones"]).get("impacto_potencial", 0) < 60:
+            continue
+        for uid in usuarios:
+            n += bool(alertas.crear(uid, "noticia", r["titulo"][:140], "alta", justificacion=f"{r['fuente']} · noticia urgente verificada · {r['enlace'] or ''}",
+                                    clave_dedupe=f"not|{r['grupo_id']}"))
+    return n
+
+
 def ronda(hilos=4):
     import concurrent.futures as cf
     t0 = time.time()
     lista = pendientes()
     with cf.ThreadPoolExecutor(max_workers=hilos, thread_name_prefix="titan-noticias") as ex:
         list(ex.map(lambda f: recoger(f), lista))
+    for paso in ("oficiales", "alertas"):
+        try:
+            if paso == "oficiales":
+                from . import oficiales
+                oficiales.actualizar_si_toca()
+            else:
+                alertar()
+        except Exception as e:
+            ESTADO["error"] = f"{paso}: {type(e).__name__}: {e}"[:300]
     ESTADO.update(rondas=ESTADO["rondas"] + 1, ultima_ronda_ts=int(time.time()), ultima_duracion_s=round(time.time() - t0, 1),
                   recogidas=ESTADO["recogidas"] + len(lista))
     return len(lista)

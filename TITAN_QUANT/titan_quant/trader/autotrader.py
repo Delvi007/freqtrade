@@ -846,6 +846,15 @@ def _control_aprendizaje(m, aj, estrategia, simbolo):
     """Aprende de los resultados REALES del broker (conocimiento en R, solo de esta cuenta): bloquea una estrategia en un activo
     si pierde en real tras aprendizaje_min_ops operaciones, y la estrategia entera si pierde tras 2,5 veces esa muestra."""
     n_min = int(aj.get("aprendizaje_min_ops", 8))
+    if m not in REALES:                          # cerebro autónomo: solo puede bloquear (más prudencia) en cuentas de práctica
+        try:
+            from ..ia import cerebro
+            b = cerebro.bloqueado(m, estrategia, simbolo)
+        except Exception:
+            b = None
+        if b:
+            return {"control": "aprendizaje_real", "ok": False,
+                    "detalle": f"bloqueada por el cerebro autónomo (inferencia bayesiana con resultados del broker): {b.get('detalle', '')}"}
     par = almacen.conocimiento(estrategia, simbolo, origen=m)
     tot = almacen.conocimiento(estrategia, origen=m)
     if par["n"] >= n_min and (par["expectativa_r"] or 0) < 0:

@@ -16,7 +16,7 @@ información para los motores, con pesos bajos, y nunca disparan una operación 
 import re
 import unicodedata
 
-VERSION = "1.3"          # cambia cuando cambian las reglas: recolector.reanalizar() recalcula lo guardado
+VERSION = "1.4"          # cambia cuando cambian las reglas: recolector.reanalizar() recalcula lo guardado
 
 # ----------------------------------------------------------------------------------------------- normalización
 STOP = set("""a an the of to in on for and or but with by at from as is are was were be been it its this that these those
@@ -102,12 +102,16 @@ TICKER = re.compile(r"\((?:nasdaq|nyse|amex|lse|tsx)\s*:\s*([A-Z.]{1,6})\)|\$([A
 POSITIVO = set("""beat beats surge surged surges soar soared rally rallied rallies gain gains gained rise rises rose jump jumped record strong stronger
 strength growth grew expand expanded expansion improve improved improves upgrade upgraded optimism optimistic boost boosted rebound rebounded recovery
 recover recovered outperform outperformed profit profits profitable approve approved approval breakthrough resilient robust exceed exceeded exceeds
-higher bullish upbeat accelerate accelerated easing eased""".split())
+higher bullish upbeat accelerate accelerated easing eased
+sube suben subio alza alzas gana ganan ganancia ganancias crecimiento crece crecio mejora mejoro repunte repunta repunto avanza avanzo
+optimismo fortaleza superavit supera supero""".split())
 NEGATIVO = set("""miss missed misses plunge plunged plunges slump slumped tumble tumbled fall falls fell drop dropped drops decline declined declines loss
 losses weak weaker weakness contraction contract contracted shrink shrank recession crisis default defaults downgrade downgraded fear fears concern
 concerns risk risks warn warned warning lawsuit fraud hack hacked exploit sanction sanctions war attack layoffs layoff cut cuts bankrupt bankruptcy
 selloff sell-off crash crashed volatile turmoil probe investigation charged fine fined lower bearish slowdown slowed stall stalled worse worst
-deteriorate deteriorated pessimism""".split())
+deteriorate deteriorated pessimism
+cae caen cayo caida caidas baja bajan bajo desplome desploma perdida perdidas recesion crisis quiebra impago alerta advertencia
+sancion sanciones guerra ataque despidos recorte recortes deficit desaceleracion pesimismo hundimiento""".split())
 NEGACION = set("not no never without fails fail failed lack lacks barely hardly".split())
 _TASA = r"(?:the )?(?:policy |bank |interest |cash |benchmark |key |official )?(?:interest )?rates?"
 RESTRICTIVO = _rx(r"hike\w*", r"rate increases?", r"rais(?:e|es|ed|ing) " + _TASA, r"increas(?:e|es|ed|ing) " + _TASA, r"bank rate increased", r"tighten\w*", r"hawkish", r"higher for longer", r"inflation (?:remains|stays) (?:high|elevated|sticky)",
