@@ -7,6 +7,14 @@ Dos motores independientes sobre la infraestructura que ya existe:
                                      las supervisa, registra todo y evalua modelos con validacion fuera de muestra.
 Todo es SIMULACION INTERNA con precios de Yahoo Finance en modo lectura.
 No se conecta a ningun broker ni envia ordenes reales.  Base de datos propia: titan_lab.db
+
+RETIRADA (v7.2.1-sin-simulacion): la simulacion interna de operaciones queda DESACTIVADA en la operativa
+ordinaria. El Motor A ya no espeja planes como operaciones, el Motor B ya no abre ni cierra operaciones
+simuladas y el supervisor no calcula fills ni resultados. titan_lab.db se conserva como ARCHIVO historico
+(solo lectura desde la interfaz); sus filas nunca se presentan como operaciones de broker. Las operaciones
+reales se ejecutan solo en IQ Option PRACTICE y cTrader DEMO, y los resultados historicos calculados viven
+en los motores de backtesting (titan_quant/backtest_binaria y titan_quant/backtest_ctrader).
+El hilo de noticias sigue activo (no simula operaciones).
 """
 import hashlib, json, math, re, sqlite3, threading, time
 from datetime import datetime, timezone
@@ -31,6 +39,14 @@ RES_VALIDOS = ("stop", "tp1_be", "tp2", "tiempo_agotado")
 SQL_ABIERTOS = "('PENDIENTE','ACTIVADA','EN_SEGUIMIENTO')"
 SQL_RES = "('stop','tp1_be','tp2','tiempo_agotado')"
 BASE_PARAMS = {"min_abs_total": 3, "tipo": "todos", "noticias": "libre"}
+SIMULACION_RETIRADA = True       # no se abren, siguen ni cierran operaciones simuladas en la operativa ordinaria
+_AUTOPRUEBA = False              # solo la autoprueba (BD temporal) puede ejercitar el codigo archivado
+AVISO_RETIRADA = ("Simulacion interna RETIRADA: el Laboratorio ya no abre ni cierra operaciones. Lo que se muestra es el ARCHIVO "
+                  "historico de la simulacion anterior (resultados calculados en R, nunca operaciones de broker).")
+
+
+def _sim_activa():
+    return _AUTOPRUEBA or not SIMULACION_RETIRADA
 
 # Supuestos de costo de ejecucion simulada (fraccion del precio). NO son datos medidos del mercado:
 # Yahoo Finance no entrega spread ni comisiones. Son supuestos conservadores y configurables.
@@ -119,6 +135,16 @@ def init_db():
             c.execute("DELETE FROM lab_procesos WHERE nombre GLOB '[0-9]*'")
             c.execute("INSERT INTO lab_aprendizaje(ts,tipo,texto) VALUES(?,?,?)",
                       (_ahora(), "mantenimiento", "Reparación v7: eliminadas %d filas de latido corruptas en lab_procesos" % n))
+        if not _sim_activa():
+            # Las operaciones simuladas que quedaron abiertas se archivan como canceladas SIN resultado (no se inventa uno).
+            ahora = _ahora()
+            n = c.execute("""UPDATE lab_trades SET estado='CANCELADA', resultado='cancelado', cerrada_ts=COALESCE(cerrada_ts, ?), actualizado_ts=?,
+                             eventos=json_insert(COALESCE(eventos,'[]'), '$[#]', json_object('t', ?, 'texto', 'Archivada sin resultado: simulacion interna retirada'))
+                             WHERE estado IN ('PENDIENTE','ACTIVADA','EN_SEGUIMIENTO')""", (ahora, ahora, ahora)).rowcount
+            if n:
+                c.execute("INSERT INTO lab_aprendizaje(ts,tipo,texto) VALUES(?,?,?)",
+                          (ahora, "mantenimiento", "Simulacion interna retirada: %d operaciones simuladas abiertas archivadas sin resultado" % n))
+            c.execute("INSERT OR REPLACE INTO lab_config(clave,valor) VALUES('b_activo','0')")
         c.commit()
         c.close()
     modelo_activo()
@@ -373,6 +399,8 @@ def _fila_trade(r):
 
 # ---------------------------------------------------------------------------- Motor A: espejo de los planes
 def espejo_a():
+    if not _sim_activa():
+        return 0
     with plan_web._DBLOCK:
         c = plan_web._con()
         filas = [plan_web._fila(r) for r in c.execute("SELECT * FROM planes").fetchall()]
@@ -440,6 +468,9 @@ def _abrir_b(a, modo, plan, modelo, feat):
 
 
 def ciclo_b():
+    if not _sim_activa():
+        _latido("motor_b", detalle="retirado: la simulacion interna de operaciones esta desactivada")
+        return
     if cfg_get("b_activo", "1") != "1":
         _latido("motor_b", detalle="pausado por el usuario")
         return
@@ -496,6 +527,8 @@ def ciclo_b():
 
 # ---------------------------------------------------------------------------- Supervisor
 def _simular_abiertas_b():
+    if not _sim_activa():
+        return 0
     ahora = _ahora()
     n = 0
     for r in _q("SELECT * FROM lab_trades WHERE motor='B' AND estado IN " + SQL_ABIERTOS):
@@ -909,8 +942,11 @@ def _bucle(nombre, fn, periodo, retraso):
 
 def iniciar():
     init_db()
-    for nombre, fn, per, ret in (("supervisor", ciclo_supervisor, P_SUPERVISOR, 6), ("motor_b", ciclo_b, P_MOTOR_B, 25),
-                                 ("noticias", ciclo_noticias, P_NOTICIAS, 50), ("aprendizaje", ciclo_aprendizaje, P_APRENDIZAJE, 150)):
+    hilos = (("noticias", ciclo_noticias, P_NOTICIAS, 50),)
+    if _sim_activa():
+        hilos = (("supervisor", ciclo_supervisor, P_SUPERVISOR, 6), ("motor_b", ciclo_b, P_MOTOR_B, 25),
+                 ("noticias", ciclo_noticias, P_NOTICIAS, 50), ("aprendizaje", ciclo_aprendizaje, P_APRENDIZAJE, 150))
+    for nombre, fn, per, ret in hilos:
         h = _HILOS.get(nombre)
         if h and h.is_alive():
             continue
@@ -944,7 +980,8 @@ def estado_general():
     vig = plan_web._VIG
     return {"ok": True, "ahora": ahora,
             "motor_a": {"vigilante_planes": bool(vig["hilo"] and vig["hilo"].is_alive()), "ultimo_ts": vig["ultimo"], "abiertas": sum(cont["A"].get(e, 0) for e in ABIERTOS)},
-            "motor_b": {"activo": cfg_get("b_activo", "1") == "1", "hilo_vivo": hilos.get("motor_b", False), "ultimo_ts": (proc.get("motor_b") or {}).get("ultimo_ts"),
+            "simulacion_retirada": not _sim_activa(),
+            "motor_b": {"activo": _sim_activa() and cfg_get("b_activo", "1") == "1", "hilo_vivo": hilos.get("motor_b", False), "ultimo_ts": (proc.get("motor_b") or {}).get("ultimo_ts"),
                         "detalle": (proc.get("motor_b") or {}).get("detalle"), "periodo_s": P_MOTOR_B, "lote": LOTE_B, "abiertas": sum(cont["B"].get(e, 0) for e in ABIERTOS)},
             "activos": {"registrados": len(reg), "estudiados_24h": estudiados}, "conteos": cont, "resultados": pnl,
             "noticias": {"total": nt["total"], "evaluadas": nt["evaluadas"], "ultimas_24h": nt["h24"]},
@@ -952,7 +989,7 @@ def estado_general():
             "procesos": [dict(proc[k], hilo_vivo=hilos.get(k)) for k in ("supervisor", "motor_b", "noticias", "aprendizaje") if k in proc] +
                         [{"nombre": k, "ultimo_ts": None, "hilo_vivo": v, "detalle": "aún sin ciclos"} for k, v in hilos.items() if k not in proc],
             "modelo": {"ver": modelo_activo()["ver"], "params": modelo_activo()["params"]},
-            "aviso": "Simulación interna con precios de Yahoo Finance. Sin órdenes reales, sin brokers. Resultados en R, no en dinero."}
+            "aviso": AVISO_RETIRADA if not _sim_activa() else "Simulación interna con precios de Yahoo Finance. Sin órdenes reales, sin brokers. Resultados en R, no en dinero."}
 
 
 def listar_trades(motor="", estado="todas", simbolo="", limite=40):
@@ -1046,11 +1083,15 @@ def manejar_post(h, ruta):
             acc = datos.get("accion")
             if acc not in ("pausar", "reanudar"):
                 raise ValueError("Acción no válida.")
+            if acc == "reanudar" and not _sim_activa():
+                raise ValueError(AVISO_RETIRADA)
             cfg_set("b_activo", "0" if acc == "pausar" else "1")
             h.enviar_json(200, {"ok": True, "motor_b_activo": acc == "reanudar"})
         elif ruta == "/api/lab/alertas/leer":
             _w("UPDATE lab_alertas SET leida=1")
             h.enviar_json(200, {"ok": True})
+        elif ruta == "/api/lab/trade/cancelar" and not _sim_activa():
+            raise ValueError(AVISO_RETIRADA)
         elif ruta == "/api/lab/trade/cancelar":
             r = _q("SELECT * FROM lab_trades WHERE id=?", (int(datos.get("id")),))
             if not r:
@@ -1081,10 +1122,18 @@ def manejar_post(h, ruta):
 # ============================================================================ autoprueba (datos sinteticos, BD temporal, sin red)
 def _autoprueba():
     import random, tempfile
-    global DB
+    global DB, _AUTOPRUEBA
     tmp = Path(tempfile.mkdtemp(prefix="titan_lab_test_"))
     DB = tmp / "lab_test.db"
     plan_web.DB = tmp / "planes_test.db"
+    # 0) Con la simulacion retirada (operativa ordinaria) no se crea ninguna operacion simulada.
+    init_db()
+    assert ciclo_b() is None and espejo_a() == 0 and _simular_abiertas_b() == 0
+    assert _q("SELECT COUNT(*) c FROM lab_trades")[0]["c"] == 0, "la simulacion retirada no debe crear operaciones"
+    print("OK  Simulacion interna retirada: ningun motor del Laboratorio crea operaciones en la operativa ordinaria")
+    # El resto de la autoprueba ejercita el codigo ARCHIVADO sobre esta BD temporal.
+    _AUTOPRUEBA = True
+    cfg_set("b_activo", "1")
     rnd = random.Random(7)
     ahora = int(time.time())
     pasos = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "60m": 3600, "1d": 86400, "1wk": 7 * 86400, "1mo": 30 * 86400}

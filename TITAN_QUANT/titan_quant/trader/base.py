@@ -1,8 +1,16 @@
-"""Contrato de los adaptadores de broker. Cada mercado/broker tiene el suyo; no se asume que todos hagan lo mismo."""
+"""Contrato de los adaptadores de broker. Cada mercado/broker tiene el suyo; no se asume que todos hagan lo mismo.
+
+Regla de integridad: un adaptador SOLO devuelve datos que proceden del broker. Si el broker no confirma algo,
+el adaptador lo dice (None / confirmada=False / OrdenNoConfirmada); nunca lo deduce ni lo inventa.
+"""
 
 
 class ErrorAdaptador(Exception):
-    pass
+    """El broker (o el adaptador antes de enviar) rechazó la orden: con certeza NO se ejecutó."""
+
+
+class OrdenNoConfirmada(Exception):
+    """La orden se envió pero el broker no dio una respuesta clara: PUDO ejecutarse. Hay que conciliarla."""
 
 
 class Adaptador:
@@ -10,7 +18,7 @@ class Adaptador:
     nombre = ""
     mercados = ()                   # forex, cripto, acciones, etf, indices, futuros, commodities, binarias
     tipos_orden = ()                # binaria, mercado, limite...
-    modalidades = ()                # simulacion, demo, real
+    modalidades = ()                # demo, binaria (practice)
     autenticacion = ""
     comisiones = ""
     spreads = ""
@@ -30,15 +38,21 @@ class Adaptador:
         raise NotImplementedError
 
     def abrir(self, solicitud):
-        """Devuelve {'id_externo','precio_entrada','costo'} o lanza ErrorAdaptador."""
+        """Envía la orden. Devuelve {'id_externo', 'precio_entrada' (del broker o None), 'costo', 'evidencia', ...}.
+        Lanza ErrorAdaptador si el broker la rechazó y OrdenNoConfirmada si el estado es dudoso."""
         raise NotImplementedError
 
+    def verificar_apertura(self, op):
+        """{'confirmada': bool, 'precio_entrada'?, 'evidencia'?}: el broker confirma que la operación está abierta."""
+        return {"confirmada": False, "detalle": "este adaptador no sabe verificar aperturas"}
+
     def actualizar(self, op):
-        """Devuelve None si sigue abierta o {'precio_salida','resultado','motivo'} si se cerró."""
+        """None si sigue abierta o sin resultado del broker; {'precio_salida','resultado','motivo','evidencia'?} con el
+        resultado QUE DA EL BROKER cuando se cerró."""
         raise NotImplementedError
 
     def cerrar(self, op, motivo):
         raise NotImplementedError
 
     def verificar(self, op):
-        return True
+        return bool(self.verificar_apertura(op).get("confirmada"))

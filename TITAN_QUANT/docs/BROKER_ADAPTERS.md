@@ -4,7 +4,6 @@ Todos los adaptadores implementan `trader/base.py`: `conectado`, `cotizacion`, `
 
 | Adaptador | Mercados | Órdenes | Modalidad | Autenticación | Compatibilidad demostrada |
 |---|---|---|---|---|---|
-| Simulador TITAN | Todos (precios de Yahoo) | Binaria y a mercado | Simulación | No requiere | **Sí**: pruebas automáticas (apertura, stop, objetivo, vencimiento, emergencia) |
 | IQ Option (no oficial) | Binarias, forex, cripto, CFD | Binaria | Demo (PRACTICE) | Correo y contraseña cifrados | **No**: la librería `iqoptionapi` no estaba instalada. Compruébalo con «Probar conexión». |
 | cTrader Open API | Forex, metales, índices, energía, CFD | A mercado con stop y objetivo relativos | **Demo y Real (LIVE)**, cada una con su base | OAuth 2.0 con `scope=trading` dentro de TITAN | Probado contra un servidor cTrader simulado (protocolo JSON oficial). **Valídalo primero con tu cuenta DEMO.** |
 

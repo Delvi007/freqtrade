@@ -33,7 +33,7 @@
   document.body.appendChild(gate);
   const CAPS = [['23 motores', 'Datos, técnico, intermarket, macro, estadística, ML, régimen, riesgo, backtest, Monte Carlo, fusión…'],
     ['4 niveles', 'Básico, intermedio, avanzado y súper avanzado, adaptados a tu hardware.'],
-    ['Bot operador', 'Simulación con precios reales y controles de riesgo independientes.'],
+    ['Bots operadores', 'Binarias en IQ Option PRACTICE y cTrader en la cuenta DEMO, con controles de riesgo; backtesting separado.'],
     ['Seguridad', 'Credenciales cifradas, sesiones protegidas y registro de seguridad.']];
 
   function pantalla(nombre, extra) {
@@ -81,7 +81,10 @@
         <div class="formrow"><label class="label">Confirmar</label><input class="field" name="clave2" type="password" required autocomplete="new-password"></div>
         <button class="btn primary">Guardar contraseña</button><div id="tqGm"></div></form>`;
     }
-    gate.innerHTML = `<div class="tq-panel"><div class="tq-hero">${izq}${der}</div></div>`;
+    gate.innerHTML = window.TQPortada ? window.TQPortada(der) : `<div class="tq-panel"><div class="tq-hero">${izq}${der}</div></div>`;
+    gate.classList.toggle('tq-gate-portada', !!window.TQPortada);
+    gate.querySelectorAll('.tqp-top nav a').forEach(a => a.onclick = ev => { ev.preventDefault();
+      const d = gate.querySelector(a.getAttribute('href')); if (d) d.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
     gate.querySelectorAll('[data-p]').forEach(b => b.onclick = ev => { ev.preventDefault(); pantalla(b.dataset.p); });
     const t0 = Date.now();
     const f = gate.querySelector('form');
@@ -122,15 +125,88 @@
   TQ.alCaducar = () => { TQ.usuario = null; pantalla('login', '<div class="tq-msg err">Tu sesión terminó. Vuelve a iniciar sesión.</div>'); };
 
   // =========================================================================== MONTAJE EN LA INTERFAZ EXISTENTE
-  const NUEVAS = [['motores', '⚙ Motores (23)'], ['inteligencia', '◇ Inteligencia'], ['hardware', '▤ Hardware'], ['diagnostico', '✚ Diagnóstico'], ['admin', '★ Administración']];
+  const NUEVAS = [['bot_ctrader', '⇄ Bot cTrader'], ['bot_iq', '⇄ Bot IQ Option'], ['noticias', '📰 Noticias'], ['motores', '⚙ Motores (23)'], ['inteligencia', '◇ Inteligencia'], ['hardware', '▤ Hardware'], ['diagnostico', '✚ Diagnóstico'], ['admin', '★ Administración']];
   const RENOMBRAR = { brokers: '▣ Configuración e integraciones', settings: '⚙ Preferencias', analysis: '◈ Analizar mercado' };
-  const TITULOS = { admin: 'Administración', motores: 'Motores', inteligencia: 'Inteligencia', hardware: 'Hardware', diagnostico: 'Diagnóstico', brokers: 'Configuración e integraciones', settings: 'Preferencias', analysis: 'Analizar mercado' };
+  const TITULOS = { noticias: 'Inteligencia de noticias', admin: 'Administración', motores: 'Motores', inteligencia: 'Inteligencia', hardware: 'Hardware', diagnostico: 'Diagnóstico', brokers: 'Configuración e integraciones', settings: 'Preferencias', analysis: 'Analizar mercado' };
   const RENDER = {};
+
+  // Barra superior FIJA (estilo «Centro de Inteligencia Global»): marca, un botón por módulo y estado de los bots.
+  function barraSuperior() {
+    const side = document.querySelector('.side'), top = document.querySelector('header.top');
+    if (!side || side.dataset.tqTop) return;
+    side.dataset.tqTop = '1';
+    document.body.classList.add('tq-h');
+    const brand = side.querySelector('.brand');
+    if (brand) brand.innerHTML = '<div class="tq-mark"><span>T</span></div><div><div class="tq-bname">TITAN <em>QUANT</em></div><div class="tq-bsub">INTELIGENCIA FINANCIERA GLOBAL</div></div>';
+    const sep = side.querySelector('.nav .muted');
+    if (sep) sep.remove();
+    const der = document.createElement('div');
+    der.className = 'tq-topder';
+    der.innerHTML = '<button class="tq-kill" id="tqKill" type="button" title="PARADA TOTAL: ninguna orden nueva a ningún broker">⛔ PARADA TOTAL</button><span id="tqReloj">--:--:--</span>';
+    if (top) { const u = top.querySelector('.tq-user'); if (u) der.prepend(u); }
+    side.appendChild(der);
+    const tick = () => { const r = $('tqReloj'); if (r) r.textContent = new Date().toLocaleTimeString('es-DO', { hour12: false }); };
+    tick(); setInterval(tick, 1000);
+    $('tqKill').onclick = panelSeguridad;
+    estadoSeguridad(); setInterval(estadoSeguridad, 20000);
+  }
+
+  // =========================================================================== SEGURIDAD: PARADA TOTAL e interruptores por broker
+  async function estadoSeguridad() {
+    let s;
+    try { s = await api('/api/tq/seguridad/interruptores'); } catch (e) { return; }
+    const bloq = Object.entries(s.brokers).filter(([, b]) => b.bloqueado);
+    let ban = $('tqBanSeg');
+    const hay = s.parada_global || bloq.length;
+    if (!hay) { if (ban) ban.remove(); $('tqKill') && $('tqKill').classList.remove('on'); return; }
+    if (!ban) { ban = document.createElement('div'); ban.id = 'tqBanSeg'; ban.className = 'tq-banseg'; document.body.prepend(ban); }
+    $('tqKill') && $('tqKill').classList.toggle('on', !!s.parada_global);
+    ban.innerHTML = (s.parada_global ? `<b>⛔ PARADA TOTAL ACTIVA</b> · ${esc(s.global.motivo || '')} · ningún bot puede enviar órdenes` : '')
+      + bloq.map(([k, b]) => ` <b>Broker ${esc(s.nombres[k])} BLOQUEADO</b> · ${esc(b.motivo || '')}`).join(' ·')
+      + ' <button class="btn" id="tqBanB">Gestionar</button>';
+    $('tqBanB').onclick = panelSeguridad;
+  }
+
+  async function panelSeguridad() {
+    let s;
+    try { s = await api('/api/tq/seguridad/interruptores'); } catch (e) { alert(e.message); return; }
+    const fondo = document.createElement('div');
+    fondo.className = 'tq-modal';
+    fondo.innerHTML = `<div class="card tq-modal-c"><b style="font-size:16px">Seguridad · PARADA TOTAL e interruptores por broker</b>
+      <p class="muted">${esc(s.regla)}</p>
+      <div class="card" style="margin:10px 0">${s.parada_global
+        ? `<div class="tq-msg err">⛔ PARADA TOTAL ACTIVA desde ${new Date(s.global.ts * 1000).toLocaleString('es')} · ${esc(s.global.motivo || '')} · origen ${esc(s.global.por || '')}</div>
+           <button class="btn primary" id="sgRe">Levantar la PARADA TOTAL (pide contraseña)</button><div class="muted" style="margin-top:6px">Los bots seguirán detenidos: inícialos uno a uno después.</div>`
+        : `<label class="label">Motivo</label><input class="field" id="sgMot" placeholder="p. ej. noticia de alto impacto, revisión, fallo del broker" maxlength="300">
+           <label class="tq-chk" style="margin-top:8px"><input type="checkbox" id="sgCerrar"> Pedir también al broker el cierre de TODAS las posiciones abiertas de los bots</label>
+           <button class="btn" id="sgPara" style="margin-top:10px;background:#5a1515;border-color:#a33;color:#fff;font-weight:700">⛔ ACTIVAR PARADA TOTAL</button>`}</div>
+      <table class="tq-table"><tr><th>Broker</th><th>Estado</th><th></th></tr>${Object.entries(s.brokers).map(([k, b]) => `<tr><td><b>${esc(s.nombres[k])}</b></td>
+        <td>${b.bloqueado ? badge('BLOQUEADO', 'err') + `<div class="muted" style="font-size:11px">${esc(b.motivo || '')} · origen ${esc(b.por || '')}</div>` : badge('habilitado', 'ok')}</td>
+        <td>${b.bloqueado ? `<button class="btn" data-des="${k}">Desbloquear</button>` : `<button class="btn" data-blq="${k}">Bloquear</button>`}</td></tr>`).join('')}</table>
+      <div id="sgMsg"></div><div style="text-align:right;margin-top:12px"><button class="btn" id="sgCerrarP">Cerrar</button></div></div>`;
+    document.body.appendChild(fondo);
+    const cerrar = () => { fondo.remove(); estadoSeguridad(); };
+    fondo.onclick = e => { if (e.target === fondo) cerrar(); };
+    $('sgCerrarP').onclick = cerrar;
+    const hacer = async datos => { try { await api('/api/tq/seguridad/interruptores', datos); cerrar(); modoBot(); } catch (e) { msg($('sgMsg'), e.message, 'err'); } };
+    if ($('sgPara')) $('sgPara').onclick = () => {
+      const c = $('sgCerrar').checked;
+      if (!confirm('¿Activar la PARADA TOTAL? Ningún bot enviará órdenes a ningún broker y todos quedarán detenidos' + (c ? ', y se pedirá cerrar TODAS las posiciones abiertas.' : '.'))) return;
+      hacer({ accion: 'parada_total', motivo: $('sgMot').value, cerrar_posiciones: c });
+    };
+    if ($('sgRe')) $('sgRe').onclick = () => { const clave = prompt('Contraseña de TITAN para levantar la PARADA TOTAL:'); if (clave) hacer({ accion: 'reanudar', clave }); };
+    fondo.querySelectorAll('[data-blq]').forEach(b => b.onclick = () => { const mot = prompt('Motivo del bloqueo de ' + s.nombres[b.dataset.blq] + ':', 'revisión manual'); if (mot !== null) hacer({ accion: 'bloquear_broker', broker: b.dataset.blq, motivo: mot }); });
+    fondo.querySelectorAll('[data-des]').forEach(b => b.onclick = () => { const clave = prompt('Contraseña de TITAN para desbloquear ' + s.nombres[b.dataset.des] + ':'); if (clave) hacer({ accion: 'desbloquear_broker', broker: b.dataset.des, clave }); });
+  }
 
   function montar() {
     const nav = document.querySelector('.nav');
     Object.entries(RENOMBRAR).forEach(([v, t]) => { const b = nav && nav.querySelector(`[data-view="${v}"]`); if (b) b.textContent = t; });
     const ref = nav && nav.querySelector('[data-view="brokers"]');
+    const opBtn = nav && nav.querySelector('[data-view="operator"]');
+    if (opBtn) opBtn.remove();                                  // sustituido por una pestaña por bot
+    const opOpt = $('mobileNav') && $('mobileNav').querySelector('option[value="operator"]');
+    if (opOpt) opOpt.remove();
     const contenido = document.querySelector('.content');
     const pie = contenido && contenido.querySelector('.footer');
     NUEVAS.filter(([id]) => id !== 'admin' || TQ.usuario.admin).filter(([id]) => id !== 'diagnostico' || TQ.usuario.admin).forEach(([id, t]) => {
@@ -147,19 +223,20 @@
       const mn = $('mobileNav');
       if (mn && !mn.querySelector(`option[value="${id}"]`)) { const o = document.createElement('option'); o.value = id; o.textContent = t.replace(/^\S+\s/, ''); mn.appendChild(o); }
     });
-    try { Object.assign(labels, TITULOS); } catch (e) {}
-    if (pie) pie.textContent = 'TITAN QUANT v7.2 · Análisis informativo · Simulación, DEMO y REAL en cuentas y bases separadas';
+    try { Object.assign(labels, TITULOS, { bot_ctrader: 'Bot cTrader', bot_iq: 'Bot IQ Option' }); } catch (e) {}
+    if (pie) pie.textContent = 'TITAN QUANT v7.2 · Análisis informativo · IQ Option PRACTICE y cTrader DEMO en cuentas y bases separadas · sin simulación interna';
     const hint = document.querySelector('.side .hint');
     if (hint) { hint.id = 'tqModoSide'; hint.innerHTML = '<span class="muted">Bot operador…</span>'; }
     const top = document.querySelector('header.top');
     const pill = top && top.querySelector('.pill');
     if (pill) {
       pill.outerHTML = `<div class="tq-user"><button class="tq-bell" id="tqBell" title="Alertas">🔔<i id="tqBellN" hidden></i></button>
-        <span id="tqModoTop" class="tq-b sim">SIMULACIÓN</span><span id="tqUser">${esc(TQ.usuario.nombre)}</span>
+        <span id="tqModoTop" class="tq-b demo">BOTS</span><span id="tqUser">${esc(TQ.usuario.nombre)}</span>
         <button class="btn" id="tqSalir" style="padding:5px 9px">Salir</button></div>`;
       $('tqBell').onclick = () => window.go('alerts');
       $('tqSalir').onclick = async () => { try { await api('/api/auth/logout', {}); } catch (e) {} location.reload(); };
     }
+    barraSuperior();
     const dashBtn = document.querySelector('#view-dashboard .head .btn.primary');
     if (dashBtn) dashBtn.textContent = '◈ ANALIZAR MERCADO';
     // enganchar navegación para renderizar al entrar
@@ -173,16 +250,19 @@
     if (location.hash === '#admin' && TQ.usuario.admin) { history.replaceState(null, '', location.pathname); window.go('admin'); }
   }
 
-  const NOMBRE_MOD = { simulacion: 'SIMULACIÓN', demo: 'DEMO', real: 'REAL LIVE' };
+  const NOMBRE_MOD = { demo: 'CTRADER · DEMO', real: 'CTRADER · REAL (LIVE)', binaria: 'IQ OPTION · PRACTICE', binaria_real: 'IQ OPTION · REAL',
+    archivo_simulacion: 'ARCHIVO de la simulación retirada' };
+  const MODS = ['demo', 'real', 'binaria', 'binaria_real'];
+  const REALES = ['real', 'binaria_real'];
   async function modoBot() {
     try {
       const d = await api('/api/tq/operador');
-      const activos = ['real', 'demo', 'simulacion'].filter(m => d.bots[m].estado === 'activo' || d.bots[m].estado === 'emergencia');
-      const m = activos[0] || 'simulacion';
+      const activos = MODS.filter(m => d.bots[m] && d.bots[m].estado === 'activo' || d.bots[m].estado === 'emergencia');
+      const m = activos[0] || 'demo';
       const top = $('tqModoTop');
-      if (top) { top.textContent = activos.length ? activos.map(x => NOMBRE_MOD[x]).join(' + ') + ' · ACTIVO' : 'BOTS DETENIDOS'; top.className = 'tq-b ' + (m === 'simulacion' ? 'sim' : m); }
+      if (top) { top.textContent = activos.length ? activos.map(x => NOMBRE_MOD[x]).join(' + ') + ' · ACTIVO' : 'BOTS DETENIDOS'; top.className = 'tq-b ' + m; }
       const side = $('tqModoSide');
-      if (side) side.innerHTML = ['simulacion', 'demo', 'real'].map(x => `<div class="tq-mode ${x}" style="margin-bottom:4px;opacity:${d.bots[x].estado === 'activo' ? 1 : .55}">${NOMBRE_MOD[x]} · ${esc(d.bots[x].estado)}</div>`).join('');
+      if (side) side.innerHTML = MODS.filter(x => d.bots[x]).map(x =>`<div class="tq-mode ${x}" style="margin-bottom:4px;opacity:${d.bots[x].estado === 'activo' ? 1 : .55}">${NOMBRE_MOD[x]} · ${esc(d.bots[x].estado)}</div>`).join('');
     } catch (e) {}
   }
 
@@ -388,6 +468,12 @@
   };
 
   // =========================================================================== HARDWARE
+  RENDER.noticias = function () {
+    const v = $('view-noticias');
+    if (window.TQNoticias) window.TQNoticias.render(v, { api, esc, num, fecha, badge, cargando, admin: !!TQ.usuario.admin });
+    else v.innerHTML = '<div class="tq-msg err">No se cargó el módulo de noticias (tq_noticias.js).</div>';
+  };
+
   RENDER.hardware = async function () {
     const v = $('view-hardware');
     v.innerHTML = `<div class="head"><div class="eyebrow">HARDWARE DIAGNOSTICS + ADAPTIVE COMPUTE</div><h1>Hardware</h1><div class="muted">Medido en el dispositivo donde corre TITAN. Lo no accesible se indica como tal.</div></div><div id="hwL">${cargando()}</div>`;
@@ -436,8 +522,8 @@
         <form class="card" data-prov="${esc(i.proveedor)}"><div class="tq-row" style="justify-content:space-between"><b>${esc(i.nombre)}</b>${badge(i.estado.replace(/_/g, ' '), ESTADO_C[i.estado])}</div>
         <div class="muted" style="margin:6px 0 10px">${esc(i.descripcion)}</div>
         ${i.campos.map(c => `<div class="formrow"><label class="label">${esc(c.etiqueta)}${c.requerido ? '' : ' (opcional)'}${c.secreto && c.guardado ? ` · guardado ${esc(c.mascara)}` : ''}</label>
-          ${c.tipo === 'select' ? `<select class="field" name="${esc(c.id)}">${c.opciones.map(o => `<option ${o === c.valor ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`
-          : `<input class="field" name="${esc(c.id)}" type="${c.secreto ? 'password' : c.tipo === 'number' ? 'number' : 'text'}" autocomplete="off" ${c.secreto ? `placeholder="${c.guardado ? 'Deja vacío para conservar' : ''}"` : `value="${esc(c.valor || '')}"`}>`}
+          ${c.tipo === 'select' ? `<select class="field" name="${esc(i.proveedor)}__${esc(c.id)}">${c.opciones.map(o => `<option ${o === c.valor ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`
+          : `<input class="field" name="${esc(i.proveedor)}__${esc(c.id)}" type="${c.secreto ? 'password' : c.tipo === 'number' ? 'number' : 'text'}" autocomplete="${c.secreto ? 'new-password' : 'off'}" ${c.secreto ?`placeholder="${c.guardado ? 'Deja vacío para conservar' : ''}"` : `value="${esc(c.valor || '')}"`}>`}
           ${c.ayuda ? `<small class="muted">${esc(c.ayuda)}</small>` : ''}</div>`).join('')}
         <div class="muted">Última comprobación: ${fecha(i.ultima_prueba_ts)} ${i.resultado ? '· ' + esc(i.resultado) : ''}</div>${i.error ? `<div class="tq-msg err">${esc(i.error)}</div>` : ''}
         <div class="tq-row" style="margin-top:10px">${i.campos.length ? '<button class="btn primary" data-acc="guardar">Guardar</button>' : ''}<button class="btn" data-acc="probar">Probar conexión</button>
@@ -451,7 +537,7 @@
           ev.preventDefault();
           const acc = b.dataset.acc;
           try {
-            if (acc === 'guardar') { const val = {}; new FormData(f).forEach((x, k) => { if (x !== '') val[k] = x; }); await api('/api/tq/integraciones/guardar', { proveedor: prov, valores: val }); }
+            if (acc === 'guardar') { const val = {}; new FormData(f).forEach((x, k) => { if (x !== '' && k.startsWith(prov + '__')) val[k.slice(prov.length + 2)] = x; }); await api('/api/tq/integraciones/guardar', { proveedor: prov, valores: val }); }
             else if (acc === 'probar') { msg(m, 'Probando…'); const r = await api('/api/tq/integraciones/probar', { proveedor: prov }); if (r.estado === 'error') throw new Error(r.error); }
             else if (acc === 'activar') await api('/api/tq/integraciones/activar', { proveedor: prov, activa: b.textContent === 'Activar' });
             else if (acc === 'eliminar') { if (!confirm('¿Eliminar de forma segura las credenciales de ' + prov + '?')) return; await api('/api/tq/integraciones/eliminar', { proveedor: prov }); }
@@ -463,72 +549,130 @@
     } catch (e) { $('igL').innerHTML = `<div class="tq-msg err">${esc(e.message)}</div>`; }
   };
 
-  // =========================================================================== BOT OPERADOR (tres cuentas separadas)
-  RENDER.operator = async function () {
-    const v = $('view-operator');
-    const mod = ls.get('tq_op_mod', 'simulacion');
-    v.innerHTML = `<div class="head"><div class="eyebrow">TITAN AUTO TRADER</div><h1>Bot operador</h1>
-      <div class="muted">Tres cuentas independientes, cada una con su propia base de datos. Solo se comparte el conocimiento del motor de aprendizaje.</div></div><div id="opL">${cargando()}</div>`;
+  // =========================================================================== BOTS OPERADORES (cuentas de broker separadas)
+  const GRUPOS = {
+    ctrader: { vista: 'view-bot_ctrader', mods: ['demo', 'real'], titulo: 'Bot cTrader', sub: 'Órdenes en tu cuenta cTrader: DEMO y, si lo enciendes, REAL (LIVE), cada una con su base de datos.' },
+    iq: { vista: 'view-bot_iq', mods: ['binaria', 'binaria_real'], titulo: 'Bot IQ Option (binarias)', sub: 'Opciones binarias en IQ Option: PRACTICE y, si lo enciendes, REAL, cada una con su base de datos.' },
+  };
+  RENDER.operator = () => window.go('bot_ctrader');
+  RENDER.bot_ctrader = () => renderBot('ctrader');
+  RENDER.bot_iq = () => renderBot('iq');
+  async function renderBot(grupo) {
+    const G = GRUPOS[grupo];
+    Object.values(GRUPOS).forEach(x => { if (x !== G && $(x.vista)) $(x.vista).innerHTML = ''; });   // ids únicos: solo una pestaña montada
+    const v = $(G.vista);
+    if (!v) return;
+    const reRender = () => renderBot(grupo);
+    const mod0 = ls.get('tq_op_mod_' + grupo, G.mods[0]);
+    const mod = G.mods.includes(mod0) ? mod0 : G.mods[0];
+    v.innerHTML = `<div class="head"><div class="eyebrow">TITAN AUTO TRADER</div><h1>${esc(G.titulo)}</h1>
+      <div class="muted">${esc(G.sub)} No hay simulación interna: toda apertura, cierre y resultado procede del broker.</div></div><div id="opL">${cargando()}</div>`;
     try {
       const d = await api('/api/tq/operador?modalidad=' + mod);
-      const m = d.bots[mod] ? mod : 'simulacion';
-      const b = d.bots[m], a = b.ajustes, rs = d.resumen[m], k = d.conocimiento_fusion;
+      const m = d.bots[mod] ? mod : G.mods[0];
+      const MODS_G = G.mods.filter(x => d.bots[x]);
+      const b = d.bots[m], a = b.ajustes, rs = d.resumen[m], k = (d.conocimiento_por_broker || {})[m.startsWith('binaria') ? 'binaria' : 'demo'] || d.conocimiento;
       const inp = (key, et, t) => `<div class="formrow"><label class="label">${et}</label><input class="field" name="${key}" type="${t || 'number'}" step="any" value="${esc(a[key] == null ? '' : a[key])}"></div>`;
       const chk = (key, et) => `<label class="tq-chk"><input type="checkbox" name="${key}" ${a[key] ? 'checked' : ''}> ${et}</label>`;
-      const ct = a.broker === 'ctrader';
-      const aviso = { simulacion: 'SIMULACIÓN — operaciones ficticias con precios reales. Base: datos/cuentas/simulacion.db',
-        demo: 'DEMO — cuenta de práctica del broker (cTrader demo). Base: datos/cuentas/demo.db',
-        real: '⚠ REAL LIVE — DINERO REAL en tu cuenta cTrader live. Base: datos/cuentas/real.db' }[m];
-      $('opL').innerHTML = `<div class="tq-tabs" id="opMod">${['simulacion', 'demo', 'real'].map(x => `<button data-mod="${x}" class="${x === m ? 'on' : ''}" style="min-width:150px;padding:10px">
-          <b>${{ simulacion: '🧪', demo: '🟦', real: '🟥' }[x]} ${NOMBRE_MOD[x]}</b><br><small>${esc(d.bots[x].estado)} · ${d.resumen[x].abiertas} abiertas · ${d.resumen[x].n} cerradas</small></button>`).join('')}</div>
+      const ct = a.broker === 'ctrader', esReal = REALES.includes(m), bin = m.startsWith('binaria');
+      const aviso = {
+        demo: 'CTRADER · DEMO — host demo.ctraderapi.com. Símbolos, velas, precios, órdenes, cierres y resultados vienen de cTrader. Base: datos/cuentas/demo.db',
+        real: 'CTRADER · REAL (LIVE) — host live.ctraderapi.com. DINERO REAL cuando el MODO LIVE está encendido. Base: datos/cuentas/real.db',
+        binaria: 'IQ OPTION · PRACTICE — pares, estado abierto/suspendido, payouts, órdenes y resultados vienen de IQ Option. Base: datos/cuentas/binaria.db',
+        binaria_real: 'IQ OPTION · REAL — DINERO REAL cuando el MODO LIVE está encendido. Opciones binarias: prohibidas a minoristas en varios países. Base: datos/cuentas/binaria_real.db' }[m];
+      const cat = d.estrategias_simples || {}, act = a.estrategias_activas || {};
+      const estrategiasHTML = Object.entries(cat).map(([id, e]) => `<div class="tq-est" style="border:1px solid var(--line);border-radius:9px;padding:9px;margin:7px 0">
+          <label class="tq-chk"><input type="checkbox" name="est__${id}__activa" ${act[id] ? 'checked' : ''}> <b>${esc(e.nombre)}</b></label>
+          <div class="tq-row" style="margin-top:6px">${Object.entries(e.parametros).map(([pk, pv]) => `<label class="label" style="min-width:110px">${esc(pk)}
+            <input class="field" style="max-width:110px" type="number" step="any" name="est__${id}__${pk}" value="${esc((act[id] || {})[pk] ?? pv)}" title="rango ${e.rangos[pk][0]}–${e.rangos[pk][1]}"></label>`).join('')}</div></div>`).join('');
+      const estrategiasBot = Object.entries(d.estrategias).filter(([x]) => ct ? ['multiactivo', 'fusion'].includes(x) : ['multiactivo', 'keltner_rci_m1'].includes(x));
+      $('opL').innerHTML = `<div class="tq-tabs" id="opMod">${MODS_G.map(x => `<button data-mod="${x}" class="${x === m ? 'on' : ''}" style="min-width:170px;padding:10px">
+          <b>${REALES.includes(x) ? (d.bots[x].live ? '🟢' : '🔴') : '🟦'} ${NOMBRE_MOD[x]}</b><br><small>${esc(d.bots[x].estado)}${REALES.includes(x) ? (d.bots[x].live ? ' · LIVE' : ' · live apagado') : ''} · ${d.resumen[x].abiertas} abiertas · ${d.resumen[x].n} con resultado</small></button>`).join('')}</div>
         <div class="tq-mode ${m}" style="margin-bottom:12px;font-size:14px">${esc(aviso)}</div>
+        ${esReal ? `<div class="card" style="margin-bottom:12px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <button class="tq-live ${b.live ? 'on' : ''}" id="opLive" type="button"><i></i>${b.live ? 'MODO LIVE ACTIVADO' : 'MODO LIVE APAGADO'}</button>
+          <span class="muted">${b.live ? 'Este bot opera con DINERO REAL. Pulsa para apagarlo (deja de abrir operaciones).' : 'Pulsa para encender: te pedirá tu contraseña de TITAN. Puede funcionar a la vez que la cuenta de práctica.'}</span><div id="opLm"></div></div>` : ''}
         <div class="tq-kpis"><div class="tq-kpi"><small>Estado del bot ${esc(NOMBRE_MOD[m])}</small><b>${esc(b.estado.toUpperCase())}</b><small>hilo ${d.hilo_vivo ? 'vivo' : 'detenido'}</small></div>
-        <div class="tq-kpi"><small>Instrumento · estrategia</small><b>${esc(ct ? a.simbolo_broker : a.instrumento)}</b><small>${esc(a.estrategia)} · ${esc(a.horizonte)} · ${ct ? 'cuenta ' + esc(a.cuenta_ctid || '— sin elegir') : esc(a.broker)}</small></div>
-        <div class="tq-kpi"><small>Resultado de esta cuenta</small><b class="${rs.neto >= 0 ? 'up' : ''}">${num(rs.neto)} ${esc(rs.moneda || '')}</b><small>${rs.n} cerradas · ${rs.ganadas} ganadas · ${rs.perdidas} perdidas</small></div>
-        <div class="tq-kpi"><small>Abiertas / rechazadas</small><b>${rs.abiertas} / ${rs.rechazadas}</b><small>broker ${esc(a.broker)}</small></div></div>
+        <div class="tq-kpi"><small>Estrategia · activos</small><b>${esc(a.estrategia === 'multiactivo' ? 'Escáner multiactivo' : (ct ? a.simbolo_broker : a.instrumento))}</b><small>${esc(a.estrategia === 'multiactivo' ? Object.keys(act).length + ' estrategias · ' + (a.simbolos_escaner || 'todos los activos') : a.estrategia)}${ct ? ' · cuenta ' + esc(a.cuenta_ctid || '— sin elegir') : ''}</small></div>
+        <div class="tq-kpi"><small>Resultado verificado por el broker</small><b class="${rs.neto >= 0 ? 'up' : ''}">${num(rs.neto)} ${esc(rs.moneda || '')}</b><small>${rs.n} cerradas · ${rs.ganadas} ganadas · ${rs.perdidas} perdidas</small></div>
+        <div class="tq-kpi"><small>Abiertas · pendientes · sin confirmar</small><b>${rs.abiertas} · ${rs.pendientes} · ${rs.sin_confirmar}</b><small>${rs.rechazadas} rechazadas/descartadas · broker ${esc(a.broker)}</small></div></div>
         <div class="card" style="margin-bottom:12px"><div class="tq-row">
           <button class="btn primary" data-est="activo">▶ Iniciar ${esc(NOMBRE_MOD[m])}</button><button class="btn" data-est="pausado">⏸ Pausar</button><button class="btn" data-est="detenido">■ Detener</button>
           <button class="btn" id="opCiclo">Ejecutar un ciclo ahora</button>
+          ${esReal ? '' : '<button class="btn" id="opExplora" title="Escáner de todos los activos y temporalidades con exigencia básica, para que el bot opere y aprenda">⚡ Perfil de exploración</button>'}
+          <button class="btn" id="opRestab" title="Vuelve la configuración a la estándar. No borra operaciones ni historial.">↺ Restablecer configuración</button>
           <button class="btn" data-est="emergencia" style="background:#5a1515;border-color:#a33;color:#fff;font-weight:700">⛔ PARADA DE EMERGENCIA</button></div>
-          ${m === 'real' ? '<div class="formrow" style="max-width:320px;margin-top:8px"><label class="label">Contraseña de TITAN (obligatoria para iniciar el bot REAL)</label><input class="field" id="opClaveReal" type="password" autocomplete="current-password"></div>' : ''}
+          <div class="muted" style="margin-top:8px" id="opRec"></div>
           <div id="opM"></div></div>
-        <div class="grid two"><form class="card" id="opF"><b>Configuración de la cuenta ${esc(NOMBRE_MOD[m])} (bot pausado o detenido)</b>
+        <div class="grid two"><form class="card" id="opF"><b>Configuración · ${esc(NOMBRE_MOD[m])} (bot pausado o detenido)</b>
           <div class="grid two" style="margin-top:10px"><div>
-          <div class="formrow"><label class="label">Broker / plataforma</label><select class="field" name="broker">${d.brokers.filter(x => d.brokers_por_modalidad[m].includes(x.id)).map(x => `<option value="${esc(x.id)}">${esc(x.nombre)}</option>`).join('')}</select></div>
-          <div id="opCT" ${ct ? '' : 'hidden'}>
-            <div class="formrow"><label class="label">Cuenta cTrader ${m === 'real' ? 'REAL (live)' : 'DEMO'}</label><select class="field" name="cuenta_ctid"><option value="">Cargando cuentas…</option></select></div>
-            <div class="formrow"><label class="label">Símbolo del broker</label><input class="field" name="simbolo_broker" list="opSims" value="${esc(a.simbolo_broker || '')}"><datalist id="opSims"></datalist></div>
-            <div class="formrow"><label class="label">Velas para el análisis</label><select class="field" name="fuente_datos"><option value="broker">Las del propio broker (recomendado)</option><option value="yahoo">Yahoo Finance</option></select></div>
-            ${chk('capital_desde_broker', 'Usar el saldo real de la cuenta como capital')}
-            <div id="opCTm" class="muted" style="margin:6px 0"></div></div>
-          ${inp('instrumento', 'Instrumento para el análisis (Yahoo)', 'text')}
-          <div class="formrow"><label class="label">Mercado</label><input class="field" name="mercado" value="${esc(a.mercado)}"></div>
-          <div class="formrow"><label class="label">Horizonte</label><select class="field" name="horizonte">${['scalping', 'intradia', 'corto', 'mediano', 'largo'].map(x => `<option ${x === a.horizonte ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
-          <div class="formrow"><label class="label">Tipo</label><select class="field" name="tipo"><option value="margen">Margen/CFD (stop y objetivo)</option><option value="binaria">Opción binaria</option></select></div>
-          <div class="formrow"><label class="label">Estrategia</label><select class="field" name="estrategia">${Object.entries(d.estrategias).map(([x, t]) => `<option value="${x}">${esc(t)}</option>`).join('')}</select></div>
-          ${inp('payout', 'Payout binarias (0–1)')}${inp('expiracion_min', 'Expiración binarias (min)')}</div><div>
+          <input type="hidden" name="broker" value="${esc(a.broker)}">
+          <div class="formrow"><label class="label">Modo del bot</label><select class="field" name="estrategia">${estrategiasBot.map(([x, t]) => `<option value="${x}">${esc(t)}</option>`).join('')}</select></div>
+          ${ct ? `<div class="formrow"><label class="label">Cuenta cTrader ${m === 'real' ? 'REAL (live)' : 'DEMO'}</label><select class="field" name="cuenta_ctid"><option value="">Cargando cuentas…</option></select></div>
+            <div class="formrow"><label class="label">Símbolo de cTrader (modo de un símbolo)</label><input class="field" name="simbolo_broker" list="opSims" value="${esc(a.simbolo_broker || '')}"><datalist id="opSims"></datalist></div>
+            ${inp('temporalidades', 'Temporalidades del escáner (' + (d.intervalos_escaner || []).join(', ') + ')', 'text')}
+            ${inp('atr_stop', 'Stop (múltiplos de ATR) = 1 R')}${inp('atr_obj', 'Objetivo usado en el backtest del ranking (×ATR)')}
+            <div class="formrow"><b>Objetivo riesgo:beneficio</b><div class="muted">1:base · 1:con tendencia a favor · hasta 1:máximo si además hay ventaja en el backtest</div></div>
+            ${inp('rr_base', 'R:B base (1:x)')}${inp('rr_tendencia', 'R:B con ventaja (1:x)')}${inp('ventaja_rr_tendencia', 'Ventaja mínima para 1:3 (R fuera de muestra)')}${inp('rr_max', 'R:B máximo con ventaja (1:x)')}${inp('ventaja_rr_max', 'Ventaja mínima para el máximo (R fuera de muestra)')}
+            ${chk('trailing', 'Trailing stop: mover el stop a favor mientras el mercado avanza')}
+            ${inp('be_r', 'Stop a la entrada al llegar a (+R)')}${inp('trail_desde_r', 'Trailing desde (+R)')}
+            ${inp('trail_atr_fuerte', 'Distancia del trailing con tendencia a favor (×ATR)')}${inp('trail_atr_debil', 'Distancia si la tendencia se debilita (×ATR)')}${inp('exp_min', 'Exigencia: expectativa mínima fuera de muestra (R)')}
+            <div id="opCTm" class="muted" style="margin:6px 0"></div>`
+          : `${inp('instrumento', 'Par de IQ Option (modo de un par)', 'text')}${inp('temporalidades_binaria', 'Temporalidades (1m = vence en 5 velas, 5m = en 1 vela)', 'text')}
+            ${inp('margen_bt', 'Exigencia: margen sobre el punto de equilibrio (−0,1 a 0,2)')}
+            ${chk('filtro_tendencia', 'Operar SIEMPRE a favor de la tendencia (CALL solo con tendencia alcista, PUT solo con bajista)')}
+            ${inp('tendencia_rapida', 'Tendencia: EMA rápida')}${inp('tendencia_lenta', 'Tendencia: EMA lenta (el precio debe estar de su lado)')}
+            ${chk('solo_divisas', 'Solo pares de divisas (incluye OTC)')}`}
+          ${inp('simbolos_escaner', ct ? 'Limitar a estos símbolos de cTrader (vacío = TODOS)' : 'Limitar a estos pares (vacío = TODOS los abiertos)', 'text')}
+          ${inp('min_ops_bt', 'Exigencia: operaciones mínimas fuera de muestra')}${inp('lote_escaner', 'Activos re-evaluados por ciclo (backtest)')}${inp('max_simbolos', 'Activos aptos vigilados para señales')}
+          ${chk('capital_desde_broker', 'Usar el saldo de la cuenta como capital')}
+          ${esReal ? '' : chk('modo_exploracion', 'Modo EXPLORACIÓN: exigencia básica para operar y aprender (solo práctica)')}
+          ${esReal ? '' : inp('muestra_exploracion', 'Exploración hasta N operaciones reales; después MODO EVIDENCIA automático')}
+          ${chk('confirmar_motores', 'Confirmar cada señal con los 23 motores (veto si apuntan en contra, alta volatilidad o evento macro)')}
+          ${inp('umbral_contra', 'Veto si los motores apuntan en contra más de (0–1)')}${chk('sin_limites_perdida', 'Sin límites de pérdida (solo práctica: no se detiene)')}
+          ${chk('veto_macro', 'Vetar tras un evento macro de alto impacto (6 h; no aplica a pares OTC)')}
+          ${inp('aprendizaje_min_ops', 'Aprendizaje real: bloquear combinaciones que pierden en el broker tras N operaciones')}</div><div>
           ${inp('capital', 'Capital de referencia (si no se usa el saldo)')}${inp('riesgo_pct', 'Riesgo máximo por operación (%)')}${inp('perdida_diaria_max_pct', 'Pérdida máxima diaria (%)')}
           ${inp('perdida_semanal_max_pct', 'Pérdida máxima semanal (%)')}${inp('exposicion_max_pct', 'Exposición total máxima (% en riesgo)')}${inp('max_abiertas', 'Máx. operaciones abiertas')}
-          ${inp('max_perdidas_consecutivas', 'Máx. pérdidas consecutivas')}${inp('spread_max_pct', 'Spread máximo (%)')}${inp('slippage_max_pct', 'Slippage máximo (%)')}
-          ${inp('datos_max_edad_s', 'Antigüedad máxima de datos (s)')}${inp('duplicado_ventana_s', 'Ventana anti-duplicados (s)')}${inp('ciclo_s', 'Frecuencia del ciclo (s)')}
-          ${m === 'real' ? chk('exigir_ventaja_real', 'Exigir ventaja demostrada antes de abrir en REAL') + inp('ventaja_min_operaciones', 'Operaciones mínimas de conocimiento') : ''}</div></div>
+          ${inp('max_perdidas_consecutivas', 'Máx. pérdidas consecutivas')}${inp('pausa_racha_min', 'Pausa tras esa racha (minutos)')}${ct ? inp('spread_max_pct', 'Spread máximo (%)') : inp('payout_min', 'Payout mínimo (0–1)')}${inp('slippage_max_pct', 'Slippage máximo (%)')}
+          ${inp('datos_max_edad_s', 'Antigüedad máxima de datos (s)')}${inp('duplicado_ventana_s', 'Ventana anti-duplicados (s)')}${inp('ciclo_s', 'Frecuencia del ciclo (s)')}</div></div>
+          <div style="margin-top:8px"><b>Estrategias básicas (configurables)</b><div class="muted">El escáner prueba cada estrategia marcada en cada activo con backtesting y solo opera las que superan la exigencia.</div>${estrategiasHTML}</div>
           <button class="btn primary">Guardar configuración ${esc(NOMBRE_MOD[m])}</button><div id="opFm"></div></form>
-          <div><div class="card"><b>🧠 Conocimiento compartido (estrategia fusion)</b>
-            <div class="muted" style="margin:6px 0">Lo único que comparten las tres cuentas: el resultado de cada operación medido en R (resultado ÷ riesgo), sin importes, saldos ni números de cuenta.</div>
+          <div><div class="card"><b>🧠 Conocimiento de este broker</b>
+            <div class="muted" style="margin:6px 0">Resultado en R (resultado ÷ riesgo) de operaciones CERRADAS Y CONFIRMADAS por ${bin ? 'IQ Option' : 'cTrader'}. Los mercados no se mezclan.</div>
             <div class="tq-kpis"><div class="tq-kpi"><small>Operaciones aprendidas</small><b>${k.n}</b></div><div class="tq-kpi"><small>Expectativa</small><b>${k.expectativa_r == null ? '—' : num(k.expectativa_r, 3) + ' R'}</b></div>
             <div class="tq-kpi"><small>Acierto</small><b>${k.tasa_acierto == null ? '—' : num(k.tasa_acierto * 100, 1) + ' %'}</b><small>${k.n ? 'IC95 ' + num(k.tasa_ic95[0] * 100, 0) + '–' + num(k.tasa_ic95[1] * 100, 0) + ' %' : ''}</small></div></div>
             <div class="muted">${Object.entries(k.por_origen).map(([o, x]) => `${esc(NOMBRE_MOD[o] || o)}: ${x.n} op · ${num(x.expectativa_r, 3)} R`).join(' · ') || 'Aún sin operaciones cerradas.'}</div></div>
-          <div class="card" style="margin-top:12px"><b>Cuenta REAL</b> ${b && d.bots.real.real_habilitado ? badge('habilitada', 'real') : badge('bloqueada', 'warn')}
-            <div class="muted">Requisitos:</div><ul>${d.requisitos_real.requisitos.map(r => `<li>${r.ok ? '✅' : '❌'} ${esc(r.requisito)} <span class="muted">(${esc(r.valor == null ? '—' : r.valor)})</span></li>`).join('')}</ul>
-            <div class="muted">Recomendaciones:</div><ul>${d.requisitos_real.recomendaciones.map(r => `<li>${r.ok ? '✅' : '⚠️'} ${esc(r.recomendacion)} <span class="muted">(${esc(r.valor)})</span></li>`).join('')}</ul>
-            ${d.bots.real.real_habilitado ? '<button class="btn" id="opRealOff">Deshabilitar la cuenta REAL</button>' : `<form id="opRealF"><div class="formrow"><label class="label">Escribe: ${esc(d.frase_real)}</label><input class="field" name="frase" autocomplete="off"></div>
-              <div class="formrow"><label class="label">Contraseña de TITAN</label><input class="field" name="clave" type="password" autocomplete="current-password"></div><button class="btn" style="border-color:#a33">Habilitar la cuenta REAL</button></form>`}
-            <div id="opRm"></div></div></div></div>
-        <div class="card" style="margin-top:12px"><div class="tq-tabs" id="opTabs"><button class="on" data-t="abiertas">Operaciones activas</button><button data-t="todas">Historial de operaciones</button><button data-t="decisiones">Decisiones del bot</button></div><div id="opT"></div></div>`;
-      v.querySelectorAll('#opMod [data-mod]').forEach(x => x.onclick = () => { ls.set('tq_op_mod', x.dataset.mod); RENDER.operator(); });
+          <div class="card" style="margin-top:12px"><b>🔎 Ranking del escáner (backtesting por activo y estrategia)</b>
+            <div class="muted" style="margin:6px 0">Resultados históricos calculados con datos de ${bin ? 'IQ Option' : 'cTrader'}; se recalculan continuamente. «Apto» = supera la exigencia básica.</div><div id="opRk">${cargando()}</div></div></div></div>
+        <div class="card" style="margin-top:12px"><div class="tq-tabs" id="opTabs"><button class="on" data-t="abiertas">Órdenes vivas en el broker</button><button data-t="todas">Historial de operaciones</button><button data-t="decisiones">Decisiones del bot</button></div><div id="opT"></div></div>
+        <div class="card" style="margin-top:12px" id="btC"></div>`;
+      v.querySelectorAll('#opMod [data-mod]').forEach(x => x.onclick = () => { ls.set('tq_op_mod_' + grupo, x.dataset.mod); reRender(); });
       const f = $('opF');
-      ['broker', 'tipo', 'estrategia', 'fuente_datos'].forEach(x => { if (f[x]) f[x].value = a[x]; });
-      f.broker.onchange = () => { $('opCT').hidden = f.broker.value !== 'ctrader'; if (f.broker.value === 'ctrader') cargarCuentas(); };
+      if (f.estrategia) f.estrategia.value = a.estrategia;
+      const rc = (d.recolector || {})[bin ? 'iqoption' : 'ctrader'];
+      if (rc && $('opRec')) $('opRec').textContent = `Recolector continuo de velas (${bin ? 'IQ Option' : 'cTrader'}, todas las temporalidades): ${rc.vivo ? 'activo' : 'detenido'}`
+        + ` · ${rc.activos || 0} activos · ronda ${rc.ronda} · ${rc.descargadas} velas nuevas${rc.actual ? ' · ahora: ' + rc.actual : ''}${rc.error ? ' · ' + rc.error : ''}`;
+      if ($('opExplora')) $('opExplora').onclick = async () => {
+        if (!confirm('Aplicar el perfil de EXPLORACIÓN a ' + NOMBRE_MOD[m] + '? Escáner de todos los activos y temporalidades con exigencia básica (solo cuenta de práctica).')) return;
+        try { await api('/api/tq/operador/exploracion', { modalidad: m }); msg($('opM'), 'Perfil de exploración aplicado: el próximo ciclo ya lo usa.', 'ok'); setTimeout(reRender, 700); }
+        catch (e) { msg($('opM'), e.message, 'err'); } };
+      (async () => { try { const r = await api(`/api/tq/escaner?mercado=${bin ? 'binaria' : 'ctrader'}&entorno=${m === 'real' ? 'live' : 'demo'}&limite=40`);
+        $('opRk').innerHTML = `<div class="tq-scroll"><table class="tq-table"><tr><th>Activo</th><th>TF</th><th>Estrategia</th><th>Ops fuera</th><th>${bin ? 'Acierto · equilibrio' : 'Expectativa fuera (R)'}</th><th>Apto</th><th>Motivo</th></tr>${r.ranking.map(x => `<tr>
+          <td><b>${esc(x.simbolo || x.activo)}</b>${x.descripcion ? '<br><small class="muted">' + esc(x.descripcion) + '</small>' : ''}</td><td>${esc(x.intervalo || '')}</td><td>${esc((cat[x.estrategia] || {}).nombre || x.estrategia)}</td><td>${x.n_fuera ?? '—'}</td>
+          <td>${bin ? (x.acierto_fuera == null ? '—' : num(x.acierto_fuera * 100, 1) + ' % · ' + num(x.equilibrio * 100, 1) + ' %') : (x.exp_fuera == null ? '—' : num(x.exp_fuera, 3))}</td>
+          <td>${x.apto ? badge('apto', 'ok') : badge('no', 'warn')}</td><td class="muted">${esc(x.motivo || '')}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">Aún sin ranking: inicia el bot o ejecuta un ciclo.</td></tr>'}</table></div>`;
+      } catch (e) { $('opRk').innerHTML = `<div class="tq-msg err">${esc(e.message)}</div>`; } })();
+      if ($('opLive')) $('opLive').onclick = async () => {
+        if (b.live) {
+          if (!confirm('¿Apagar el MODO LIVE de ' + NOMBRE_MOD[m] + '? El bot deja de abrir operaciones con dinero real.')) return;
+          try { await api('/api/tq/operador/live', { modalidad: m, encender: false }); modoBot(); reRender(); } catch (e) { msg($('opLm'), e.message, 'err'); }
+          return;
+        }
+        const clave = prompt('⚠ MODO LIVE: ' + NOMBRE_MOD[m] + ' operará con DINERO REAL. Escribe tu contraseña de TITAN para encenderlo:');
+        if (!clave) return;
+        try { await api('/api/tq/operador/live', { modalidad: m, encender: true, clave }); modoBot(); reRender(); } catch (e) { msg($('opLm'), e.message, 'err'); }
+      };
       const cargarSimbolos = async () => {
         if (!f.cuenta_ctid.value) return;
         try { const r = await api(`/api/tq/ctrader/simbolos?modalidad=${m}&cuenta=${encodeURIComponent(f.cuenta_ctid.value)}`);
@@ -538,7 +682,7 @@
         } catch (e) { $('opCTm').textContent = e.message; }
       };
       const cargarCuentas = async () => {
-        if (m === 'simulacion') return;
+        if (!ct) return;
         if (!d.ctrader_autorizado) { f.cuenta_ctid.innerHTML = '<option value="">—</option>'; $('opCTm').innerHTML = 'cTrader no está autorizado: ve a <a href="#" id="opIrInt">Configuración e integraciones → cTrader</a> y pulsa Autorizar.'; $('opIrInt').onclick = ev => { ev.preventDefault(); window.go('brokers'); }; return; }
         try { const r = await api('/api/tq/ctrader/cuentas?modalidad=' + m);
           if (!r.ok) throw new Error(r.error);
@@ -549,28 +693,27 @@
           cargarSimbolos();
         } catch (e) { f.cuenta_ctid.innerHTML = '<option value="">—</option>'; $('opCTm').textContent = e.message; }
       };
-      f.cuenta_ctid.onchange = cargarSimbolos;
-      f.simbolo_broker.onchange = () => { const s = d.simbolos_sugeridos[f.simbolo_broker.value.toUpperCase()]; if (s && !f.instrumento.dataset.tocado) f.instrumento.value = s; };
-      f.instrumento.oninput = () => { f.instrumento.dataset.tocado = 1; };
-      if (ct) cargarCuentas();
+      if (ct) { f.cuenta_ctid.onchange = cargarSimbolos; cargarCuentas(); }
       f.onsubmit = async ev => { ev.preventDefault(); const aj = {}; new FormData(f).forEach((x, key) => aj[key] = x);
         f.querySelectorAll('input[type=checkbox]').forEach(c => aj[c.name] = c.checked);
-        if (f.broker.value !== 'ctrader') { delete aj.cuenta_ctid; }
-        try { await api('/api/tq/operador/ajustes', { modalidad: m, ajustes: aj }); msg($('opFm'), 'Configuración guardada.', 'ok'); modoBot(); setTimeout(RENDER.operator, 700); } catch (e) { msg($('opFm'), e.message, 'err'); } };
+        const ests = {};
+        Object.keys(aj).filter(x => x.startsWith('est__')).forEach(x => { const [, id, campo] = x.split('__');
+          if (aj['est__' + id + '__activa'] === true) { ests[id] = ests[id] || {}; if (campo !== 'activa') ests[id][campo] = aj[x]; } delete aj[x]; });
+        aj.estrategias_activas = ests;
+        if (!ct) { delete aj.cuenta_ctid; }
+        try { await api('/api/tq/operador/ajustes', { modalidad: m, ajustes: aj }); msg($('opFm'), 'Configuración guardada.', 'ok'); modoBot(); setTimeout(reRender, 700); } catch (e) { msg($('opFm'), e.message, 'err'); } };
       v.querySelectorAll('[data-est]').forEach(x => x.onclick = async () => {
         const est = x.dataset.est, datos = { modalidad: m, estado: est };
         if (est === 'emergencia' && !confirm(`¿PARADA DE EMERGENCIA en ${NOMBRE_MOD[m]}? No abrirá operaciones y cerrará sus posiciones.`)) return;
-        if (est === 'activo' && m === 'demo' && !confirm('Vas a iniciar el bot en tu cuenta DEMO del broker. ¿Confirmas?')) return;
-        if (est === 'activo' && m === 'real') {
-          datos.clave = ($('opClaveReal') || {}).value || '';
-          if (!datos.clave) return msg($('opM'), 'Escribe tu contraseña para iniciar el bot REAL.', 'err');
-          if (!confirm('⚠ Vas a operar con DINERO REAL en tu cuenta cTrader live. ¿Confirmas?')) return;
-        }
-        try { await api('/api/tq/operador/estado', datos); modoBot(); RENDER.operator(); } catch (e) { msg($('opM'), e.message, 'err'); }
+        if (est === 'activo' && esReal && !b.live) return msg($('opM'), 'Enciende primero el MODO LIVE (botón rojo de arriba).', 'err');
+        if (est === 'activo' && esReal) { datos.clave = prompt('Contraseña de TITAN para reanudar el bot con DINERO REAL:') || ''; if (!datos.clave) return; }
+        if (est === 'activo' && !esReal && !confirm(m === 'demo' ? 'Vas a iniciar el bot cTrader en tu cuenta DEMO: enviará órdenes a esa cuenta de práctica. ¿Confirmas?' : 'Vas a iniciar el bot en tu cuenta PRACTICE de IQ Option: enviará órdenes a esa cuenta de práctica. ¿Confirmas?')) return;
+        try { await api('/api/tq/operador/estado', datos); modoBot(); reRender(); } catch (e) { msg($('opM'), e.message, 'err'); }
       });
-      if ($('opRealF')) $('opRealF').onsubmit = async ev => { ev.preventDefault(); const F = ev.target;
-        try { await api('/api/tq/operador/real', { frase: F.frase.value, clave: F.clave.value }); msg($('opRm'), 'Cuenta REAL habilitada.', 'ok'); setTimeout(RENDER.operator, 800); } catch (e) { msg($('opRm'), e.message, 'err'); } };
-      if ($('opRealOff')) $('opRealOff').onclick = async () => { try { await api('/api/tq/operador/real', { deshabilitar: true }); RENDER.operator(); } catch (e) { msg($('opRm'), e.message, 'err'); } };
+      $('opRestab').onclick = async () => {
+        if (!confirm('¿Restablecer la configuración de ' + NOMBRE_MOD[m] + ' a los valores estándar? No se borran operaciones ni historial.')) return;
+        try { await api('/api/tq/operador/restablecer', { modalidad: m }); msg($('opM'), 'Configuración restablecida a los valores estándar.', 'ok'); setTimeout(reRender, 600); }
+        catch (e) { msg($('opM'), e.message, 'err'); } };
       $('opCiclo').onclick = async () => { msg($('opM'), 'Ejecutando ciclo…'); try { const r = await api('/api/tq/operador/ciclo', { modalidad: m }); msg($('opM'), 'Ciclo: ' + r.ciclo.accion + (r.ciclo.cerradas ? ` · ${r.ciclo.cerradas} cerradas` : '') + (r.ciclo.error ? ' · ' + r.ciclo.error : ''), 'ok'); tabla('decisiones'); sondearAlertas(); } catch (e) { msg($('opM'), e.message, 'err'); } };
       const tabla = async t => {
         $('opTabs').querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.t === t));
@@ -579,14 +722,64 @@
           const r = await api('/api/tq/operador/decisiones?modalidad=' + m);
           T.innerHTML = `<div class="tq-scroll"><table class="tq-table"><tr><th>Fecha</th><th>Cuenta</th><th>Instrumento</th><th>Acción</th><th>Motivo</th><th>Controles</th></tr>${r.decisiones.map(x => `<tr><td>${fecha(x.ts)}</td><td>${badge(NOMBRE_MOD[x.modalidad], x.modalidad === 'simulacion' ? 'sim' : x.modalidad)}</td><td>${esc(x.instrumento || '')}</td><td>${esc(x.accion)}</td><td class="muted">${esc(x.motivo)}</td><td>${x.controles.length ? x.controles.filter(c => !c.ok).map(c => badge(c.control, 'err')).join(' ') || badge('todos OK', 'ok') : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Sin decisiones todavía.</td></tr>'}</table></div>`;
         } else {
-          const r = await api('/api/tq/operador/operaciones?modalidad=' + m + (t === 'abiertas' ? '&estado=abierta' : ''));
-          T.innerHTML = `<div class="tq-scroll"><table class="tq-table"><tr><th>#</th><th>Cuenta</th><th>Instrumento</th><th>Tipo</th><th>Dir.</th><th>Volumen / monto</th><th>Entrada</th><th>Stop / Obj.</th><th>Riesgo</th><th>Estado</th><th>Resultado</th><th>R</th><th>Motivo</th></tr>${r.operaciones.map(o => `<tr><td>${o.id}</td><td>${badge(NOMBRE_MOD[o.modalidad] + (o.cuenta && o.cuenta !== o.modalidad ? ' ' + o.cuenta : ''), o.modalidad === 'simulacion' ? 'sim' : o.modalidad)}</td><td>${esc(o.simbolo_broker || o.instrumento)}</td><td>${esc(o.tipo)}</td><td>${esc(o.direccion)}</td><td>${o.volumen ? num(o.volumen / 100, 2) + ' u' : num(o.monto)}</td><td>${num(o.precio_entrada, 5)}</td><td>${num(o.stop, 5)} / ${num(o.objetivo, 5)}</td><td>${num(o.riesgo_importe)} ${esc(o.moneda || '')}</td><td>${esc(o.estado)}</td><td class="${(o.resultado || 0) >= 0 ? 'up' : ''}">${num(o.resultado)}</td><td>${num(o.r, 2)}</td><td class="muted">${esc(o.motivo_cierre || '')}</td></tr>`).join('') || '<tr><td colspan="13" class="muted">Sin operaciones en esta cuenta.</td></tr>'}</table></div>`;
+          const r = await api('/api/tq/operador/operaciones?modalidad=' + m + (t === 'abiertas' ? '&estado=vivas' : ''));
+          T.innerHTML = `<div class="tq-scroll"><table class="tq-table"><tr><th>#</th><th>Cuenta</th><th>Instrumento</th><th>Tipo</th><th>Dir.</th><th>Volumen / monto</th><th>Entrada</th><th>Stop / Obj.</th><th>Riesgo</th><th>Estado</th><th>Fase (broker)</th><th>Id broker</th><th>Resultado</th><th>R</th><th>Motivo</th><th></th></tr>${r.operaciones.map(o => `<tr><td>${o.id}</td><td>${badge(NOMBRE_MOD[o.modalidad] + (o.cuenta && o.cuenta !== o.modalidad ? ' ' + o.cuenta : ''), o.modalidad === 'simulacion' ? 'sim' : o.modalidad)}</td><td>${esc(o.simbolo_broker || o.instrumento)}</td><td>${esc(o.tipo)}</td><td>${esc(o.direccion)}</td><td>${o.volumen ? num(o.volumen / 100, 2) + ' u' : num(o.monto)}</td><td>${num(o.precio_entrada, 5)}</td><td>${num(o.stop, 5)} / ${num(o.objetivo, 5)}</td><td>${num(o.riesgo_importe)} ${esc(o.moneda || '')}</td><td>${esc(o.estado)}</td><td>${badge(FASES[o.fase] || o.fase, o.fase === 'resultado_recibido' ? 'ok' : o.fase === 'error_broker' ? 'err' : 'warn')}</td><td>${esc(o.id_externo || '—')}</td><td class="${(o.resultado || 0) >= 0 ? 'up' : ''}">${o.fuente_resultado === 'broker' ? num(o.resultado) : '—'}</td><td>${o.fuente_resultado === 'broker' ? num(o.r, 2) : '—'}</td><td class="muted">${esc(o.motivo_cierre || '')}</td><td><button class="btn" data-traza="${o.id}" style="padding:3px 7px">Traza</button>${o.estado === 'error' ? ` <button class="btn" data-conc="${o.id}" style="padding:3px 7px">Conciliar</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="16" class="muted">Sin operaciones en esta cuenta.</td></tr>'}</table></div><div id="opTz"></div>`;
+          T.querySelectorAll('[data-traza]').forEach(x => x.onclick = async () => {
+            try { const e = await api(`/api/tq/operador/eventos?modalidad=${m}&id=${x.dataset.traza}`);
+              $('opTz').innerHTML = `<div class="card" style="margin-top:8px"><b>Traza verificable de la operación #${e.operacion.id}</b><table class="tq-table"><tr><th>Hora</th><th>Fase</th><th>Id broker</th><th>Evidencia</th></tr>${e.eventos.map(ev => `<tr><td>${fecha(ev.ts)}</td><td>${esc(FASES[ev.fase] || ev.fase)}</td><td>${esc(ev.id_broker || '—')}</td><td class="muted" style="max-width:520px;word-break:break-all">${esc(ev.detalle || '')}</td></tr>`).join('')}</table></div>`;
+            } catch (er) { $('opTz').innerHTML = `<div class="tq-msg err">${esc(er.message)}</div>`; } });
+          T.querySelectorAll('[data-conc]').forEach(x => x.onclick = async () => {
+            const res = prompt('Revisa la orden en el broker. Escribe «no_ejecutada» si el broker no la tiene, o «id_broker:NÚMERO» si aparece:');
+            if (!res) return;
+            const nota = prompt('Describe qué comprobaste en el broker:') || '';
+            try { await api('/api/tq/operador/conciliar', { modalidad: m, id: +x.dataset.conc, resultado_broker: res.trim(), nota }); tabla('todas'); } catch (er) { alert(er.message); } });
         }
       };
       $('opTabs').querySelectorAll('button').forEach(x => x.onclick = () => tabla(x.dataset.t));
       tabla('abiertas');
+      backtesting(m === 'binaria' ? 'binaria' : 'ctrader', a);
     } catch (e) { $('opL').innerHTML = `<div class="tq-msg err">${esc(e.message)}</div>`; }
-  };
+  }
+
+  const FASES = { oportunidad_detectada: 'Oportunidad detectada (no enviada)', orden_enviada: 'Orden enviada', orden_aceptada: 'Aceptada por el broker',
+    abierta_confirmada: 'Abierta (confirmada)', cerrada_confirmada: 'Cerrada (confirmada)', resultado_recibido: 'Resultado del broker', error_broker: 'Error / rechazo del broker' };
+
+  // =========================================================================== BACKTESTING (dos sistemas independientes)
+  async function backtesting(mercado, a) {
+    const C = $('btC'); if (!C) return;
+    const bin = mercado === 'binaria';
+    C.innerHTML = `<b>📊 Backtesting ${bin ? 'del bot de binarias (histórico de IQ Option)' : 'del bot cTrader (histórico de cTrader DEMO)'}</b>
+      <div class="tq-mode" style="margin:8px 0">RESULTADOS HISTÓRICOS CALCULADOS sobre velas pasadas. No son operaciones de ${bin ? 'IQ Option' : 'cTrader'} y no cuentan en saldos ni informes del broker.
+      Base propia: datos/backtest_${mercado}/historico.db</div>
+      <form id="btF" class="tq-row" style="flex-wrap:wrap;gap:8px">${bin
+        ? `<input class="field" name="activo" value="${esc(a.instrumento || 'EURGBP-OTC')}" style="max-width:160px" title="Par OTC"><input class="field" name="velas" type="number" value="3000" style="max-width:110px" title="Velas M1 a recopilar"><input class="field" name="payout" placeholder="payout (vacío = observado)" style="max-width:190px">`
+        : `<input class="field" name="simbolo" value="${esc(a.simbolo_broker || 'XAUUSD')}" style="max-width:130px"><select class="field" name="intervalo" style="max-width:100px">${['5m', '15m', '1h', '4h'].map(x => `<option ${x === '15m' ? 'selected' : ''}>${x}</option>`).join('')}</select><input class="field" name="dias" type="number" value="60" style="max-width:90px" title="Días a recopilar"><select class="field" name="estrategia" style="max-width:220px"><option value="ema_rsi_atr">EMA+RSI · stop/obj ATR (motor 13)</option><option value="keltner_rci_atr">Keltner+RCI · stop/obj ATR</option></select><input class="field" name="costo" placeholder="coste %/lado (vacío = spread medido)" style="max-width:240px">`}
+        <button class="btn" type="button" id="btRec">Recopilar histórico del broker</button><button class="btn primary">Ejecutar backtest</button></form><div id="btM"></div><div id="btI">${cargando()}</div>`;
+    const F = $('btF');
+    const pintar = async () => {
+      try { const r = await api('/api/tq/backtest?mercado=' + mercado);
+        $('btI').innerHTML = `<div class="muted" style="margin:8px 0">Histórico guardado: ${r.inventario.map(x => `${esc(x.simbolo)} ${esc(x.intervalo)} (${esc(x.proveedor)}): ${x.n} velas, ${fecha(x.desde)} → ${fecha(x.hasta)}`).join(' · ') || 'vacío'}</div>
+        <div class="tq-scroll"><table class="tq-table"><tr><th>#</th><th>Fecha</th><th>Activo</th><th>Velas</th><th>Ops</th><th>${bin ? 'Acierto · equilibrio' : 'Expectativa R'}</th><th>Fuera de muestra</th><th>Sobreoptimización</th></tr>${r.informes.map(x => {
+          const g = x.global || {};
+          return `<tr><td>${x.id}</td><td>${fecha(x.ts)}</td><td>${esc(x.activo || x.simbolo)} ${esc(x.intervalo || '')} ${esc(x.estrategia || '')}</td><td>${x.velas}</td><td>${bin ? g.decisivas : g.n}</td>
+            <td>${bin ? (g.tasa_acierto == null ? '—' : num(g.tasa_acierto * 100, 1) + ' % · ' + num(g.punto_equilibrio * 100, 1) + ' %') : (g.expectativa_r == null ? '—' : num(g.expectativa_r, 3))}</td>
+            <td>${bin ? badge((x.evidencia_fuera_de_muestra || {}).suficiente ? 'ventaja' : 'sin ventaja', (x.evidencia_fuera_de_muestra || {}).suficiente ? 'ok' : 'warn') : badge(((x.fuera_de_muestra || {}).ventaja_significativa) ? 'ventaja' : 'sin ventaja', ((x.fuera_de_muestra || {}).ventaja_significativa) ? 'ok' : 'warn')}</td>
+            <td>${x.sobreoptimizacion_probable == null ? '—' : badge(x.sobreoptimizacion_probable ? 'probable' : 'no detectada', x.sobreoptimizacion_probable ? 'err' : 'ok')}</td></tr>`; }).join('') || '<tr><td colspan="8" class="muted">Aún no hay informes de backtesting.</td></tr>'}</table></div>`;
+      } catch (e) { $('btI').innerHTML = `<div class="tq-msg err">${esc(e.message)}</div>`; } };
+    $('btRec').onclick = async () => { msg($('btM'), 'Recopilando del broker (solo lectura)…');
+      const d = { mercado }; new FormData(F).forEach((x, k) => d[k] = x);
+      try { const r = await api('/api/tq/backtest/recopilar', d); if (!r.ok) throw new Error(r.error);
+        msg($('btM'), `Guardadas ${r.recopilacion.guardadas} velas nuevas · huecos ${r.recopilacion.huecos}` + (bin ? ` · payout observado ${r.recopilacion.payout_observado ?? '—'}` : ` · spread observado ${r.recopilacion.spread_observado ?? '—'}`), 'ok'); pintar(); }
+      catch (e) { msg($('btM'), e.message, 'err'); } };
+    F.onsubmit = async ev => { ev.preventDefault(); msg($('btM'), 'Calculando backtest…');
+      const d = { mercado }; new FormData(F).forEach((x, k) => d[k] = x);
+      try { const r = await api('/api/tq/backtest/ejecutar', d); if (!r.ok) throw new Error(r.error);
+        const x = r.resultado, so = x.sobreoptimizacion || {};
+        msg($('btM'), `${x.etiqueta} · ${bin ? `acierto ${x.global.tasa_acierto == null ? '—' : num(x.global.tasa_acierto * 100, 1) + ' %'} (equilibrio ${num(x.global.punto_equilibrio * 100, 1)} %) · fuera de muestra: ${x.evidencia_fuera_de_muestra.motivo}`
+          : `expectativa fuera de muestra ${x.fuera_de_muestra.expectativa_r == null ? '—' : num(x.fuera_de_muestra.expectativa_r, 3) + ' R'} (${x.fuera_de_muestra.n || 0} ops) · ${x.ventaja_fuera_de_muestra.motivo}`} · sobreoptimización: ${so.sobreoptimizacion_probable ? 'PROBABLE (' + so.motivos.join('; ') + ')' : so.evaluable === false ? 'no evaluable' : 'no detectada'}`, 'ok'); pintar(); }
+      catch (e) { msg($('btM'), e.message, 'err'); } };
+    pintar();
+  }
 
   // =========================================================================== HISTORIAL
   RENDER.history = async function () {

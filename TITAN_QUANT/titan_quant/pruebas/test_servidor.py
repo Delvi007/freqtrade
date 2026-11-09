@@ -94,18 +94,34 @@ class TestServidor(Base):
                   "/api/tq/operador/operaciones", "/api/tq/operador/decisiones", "/api/tq/integraciones", "/api/tq/diagnostico",
                   "/api/auth/sesiones", "/api/cuenta/eventos", "/api/cuenta/preferencias",
                   "/api/assets", "/api/history", "/api/stats", "/api/alerts", "/api/plans", "/api/quotes?symbols=GC=F",
-                  "/api/chart?symbol=GC=F&tf=15m", "/api/mtf?symbol=GC=F", "/api/lab/estado", "/api/lab/metricas"):
+                  "/api/chart?symbol=GC=F&tf=15m", "/api/mtf?symbol=GC=F", "/api/lab/estado", "/api/lab/metricas",
+                  "/api/tq/backtest?mercado=binaria", "/api/tq/backtest?mercado=ctrader"):
             code, d, _ = c.get(r)
             self.assertEqual(code, 200, f"{r}: {d}")
         self.assertEqual(c.post("/api/analyze", {"simbolo": "GC=F"})[0], 200)
         self.assertEqual(c.post("/api/plan", {"simbolo": "GC=F", "modo": "intradia"})[0], 200)
+        # La simulación interna se retiró: no hay modalidad 'simulacion'.
+        self.assertEqual(c.post("/api/tq/operador/estado", {"modalidad": "simulacion", "estado": "activo"})[0], 400)
+        self.assertEqual(c.get("/api/tq/operador?modalidad=simulacion")[0], 400)
+        self.assertNotIn("simulador", [b["id"] for b in c.get("/api/tq/operador")[1]["brokers"]])
+        # Bot cTrader (DEMO): sin autorización de cTrader el ciclo informa «broker no disponible», no inventa nada.
+        self.assertEqual(c.post("/api/tq/operador/estado", {"estado": "activo"})[0], 400)          # falta la cuenta DEMO
+        self.assertEqual(c.post("/api/tq/operador/ajustes", {"modalidad": "demo", "ajustes": {"cuenta_ctid": 9001}})[0], 200)
         self.assertEqual(c.post("/api/tq/operador/estado", {"estado": "activo"})[0], 200)
         code, d, _ = c.post("/api/tq/operador/ciclo")
-        self.assertEqual(code, 200, d)
+        self.assertEqual((code, d["ciclo"]["accion"]), (200, "broker_no_disponible"), d)
+        self.assertEqual(c.get("/api/tq/operador/operaciones?modalidad=demo")[1]["operaciones"], [])
         self.assertEqual(c.post("/api/tq/operador/estado", {"estado": "emergencia"})[0], 200)
+        code, d, _ = c.post("/api/tq/backtest/ejecutar", {"mercado": "binaria", "activo": "EURGBP-OTC"})
+        self.assertEqual((code, d["ok"]), (200, False), d)                                       # sin histórico: lo dice, no inventa
+        self.assertIn("velas", d["error"])
         self.assertEqual(c.post("/api/cuenta/preferencias", {"sonidos": {"activado": True, "volumen": 0.4}})[0], 200)
         self.assertEqual(c.post("/api/cuenta/preferencias", {"riesgo": {"capital": 1000, "riesgo_pct": 9}})[0], 400)
-        self.assertEqual(c.post("/api/tq/operador/real", {"frase": "x", "clave": CLAVE})[0], 400)
+        self.assertEqual(c.post("/api/tq/operador/live", {"modalidad": "real", "encender": True, "clave": "mala"})[0], 403)  # contraseña incorrecta
+        self.assertEqual(c.post("/api/tq/operador/live", {"modalidad": "demo", "encender": True, "clave": CLAVE})[0], 400)   # la DEMO no tiene LIVE
+        self.assertFalse(c.get("/api/tq/operador")[1]["bots"]["binaria_real"]["live"])
+        self.assertEqual(c.get("/api/tq/escaner?mercado=ctrader")[0], 200)
+        self.assertEqual(c.get("/api/tq/escaner?mercado=binaria")[0], 200)
 
     def test_ctrader_demo_y_real_por_separado_desde_la_api(self):
         from titan_quant.pruebas.ctrader_falso import CTraderFalso

@@ -306,6 +306,9 @@ class Handler(SimpleHTTPRequestHandler):
                 except ValueError as e:
                     self.enviar_json(400, {"ok": False, "error": str(e)})
                     return
+                except RuntimeError as e:
+                    self.enviar_json(503, {"ok": False, "error": "Datos de mercado no disponibles: " + str(e)})
+                    return
                 g["ok"] = True
                 self.enviar_json(200, g)
                 return
@@ -317,6 +320,9 @@ class Handler(SimpleHTTPRequestHandler):
                     g = obtener_mtf((q.get("symbol") or [""])[0])
                 except ValueError as e:
                     self.enviar_json(400, {"ok": False, "error": str(e)})
+                    return
+                except RuntimeError as e:
+                    self.enviar_json(503, {"ok": False, "error": "Datos de mercado no disponibles: " + str(e)})
                     return
                 g["ok"] = True
                 self.enviar_json(200, g)

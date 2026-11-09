@@ -53,7 +53,7 @@ La palabra «terminado» no se usa en este documento.
 | Configuración e integraciones (9.x) | Integrado · Probado | Estados reales. Solo pasa a «conectada» tras una prueba real. |
 | Centro de alertas + sonidos | Integrado · Probado | No duplica alertas ni suena dos veces por la misma. |
 | Historial: ocultar, archivar, restaurar y eliminar permanentemente | Integrado · Probado | Ocultar no borra nada. Solo se pueden eliminar análisis que ya estén archivados. |
-| TITAN AUTO TRADER, tres cuentas | Integrado · Probado | Simulación, DEMO y REAL independientes, cada una con su base; 14 controles + spread real + ventaja demostrada (REAL); parada de emergencia por cuenta. |
+| TITAN AUTO TRADER, dos bots de broker | Integrado · Probado · Verificado en broker 09/11/2026 | Binarias en IQ Option PRACTICE y cTrader en la cuenta DEMO, cada uno con su base; sin simulación interna; REAL bloqueado por código; fases verificables con id del broker; parada de emergencia por cuenta. |
 | Conocimiento compartido | Integrado · Probado | Resultados en R de las tres cuentas; nada más se comparte. |
 | Adaptador IQ Option, modo demo | Implementado · **no probado** | Usa una librería no oficial (no instalada aquí), solo en PRACTICE y solo binarias. |
 | Adaptador cTrader DEMO y REAL | Integrado · Probado (servidor cTrader simulado) · **no validado** | Órdenes a mercado con stop/objetivo, tamaño por riesgo, seguimiento, cierre y renovación de token por la Open API JSON. Validar primero con tu cuenta DEMO. |

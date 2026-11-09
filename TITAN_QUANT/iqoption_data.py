@@ -10,11 +10,18 @@ ROOT = Path(__file__).resolve().parent
 ENV_FILE = ROOT / '.iqoption.env'
 _LOCK = threading.RLock()
 _API = None
-_OPEN = None
-_OPEN_TS = 0
 _STREAMS = set()
 _PREV_CACHE = {}
 MAX_CANDLES = 20000
+
+# Catálogo por grupo: éxitos y fallos se guardan en caché para no reintentar en cada ciclo.
+_CAT = {}      # grupo -> (ts, {nombre: {'open': bool}})
+_FALLOS = {}   # grupo -> (ts, mensaje)
+TTL_OK_S = 300
+TTL_FALLO_S = 300
+TIMEOUT_CATALOGO_S = 15
+# Pares OTC (p. ej. EURGBP-OTC) no están en cfd/forex/crypto. Grupos de binarias/turbo: nombres por verificar en PRACTICE.
+GRUPOS_OTC = ('turbo', 'binary')
 
 # Símbolos internos de TITAN -> nombres candidatos de IQ Option y mercado esperado.
 MAP = {
@@ -103,84 +110,207 @@ def _get_instruments_bounded(api, market, timeout=15):
     )
 
 
-def _open_times():
-    global _OPEN, _OPEN_TS
+def _abierto_ahora(item, ahora):
+    schedule = item.get("schedule") or []
+    if not isinstance(schedule, list):
+        return False
+    for period in schedule:
+        if not isinstance(period, dict):
+            continue
+        try:
+            if float(period["open"]) <= ahora <= float(period["close"]):
+                return True
+        except (KeyError, TypeError, ValueError):
+            continue
+    return False
+
+
+def _catalogo_grupo(api, group):
+    """Catálogo de UN grupo. Éxitos y fallos quedan en caché: un grupo caído no se reintenta en cada ciclo."""
+    ahora = time.time()
     with _LOCK:
-        if _OPEN is not None and time.time() - _OPEN_TS < 300:
-            return _OPEN
-
-        api = _api()
-        data = {}
-        errors = []
-
-        # Consultar exclusivamente los mercados utilizados por TITAN.
-        # No llamar get_all_open_time(): esa función consulta DIGITAL
-        # y puede fallar cuando IQ Option no devuelve su catálogo.
-        for group in ("cfd", "forex", "crypto"):
-            try:
-                response = _get_instruments_bounded(api, group, timeout=15)
-                if not isinstance(response, dict):
-                    raise RuntimeError("respuesta no válida")
-                instruments = response.get("instruments")
-                if not isinstance(instruments, list):
-                    raise RuntimeError("lista de instrumentos ausente")
-
-                assets = {}
-                for item in instruments:
-                    if not isinstance(item, dict) or not item.get("name"):
-                        continue
-
-                    name = str(item["name"])
-                    schedule = item.get("schedule") or []
-                    is_open = False
-
-                    if isinstance(schedule, list):
-                        for period in schedule:
-                            if not isinstance(period, dict):
-                                continue
-                            try:
-                                opening = float(period["open"])
-                                closing = float(period["close"])
-                                if opening <= time.time() <= closing:
-                                    is_open = True
-                                    break
-                            except (KeyError, TypeError, ValueError):
-                                continue
-
-                    assets[name] = {"open": is_open}
-
-                if not assets:
-                    raise RuntimeError("IQ Option devolvió cero instrumentos")
-
-                data[group] = assets
-                print("[IQ OPTION] {}: {} instrumentos".format(group, len(assets)))
-
-            except Exception as exc:
-                errors.append("{}: {}".format(group, exc))
-
-        if errors:
-            raise RuntimeError(
-                "No se pudo completar el catálogo IQ Option: " + " | ".join(errors)
-            )
-
-        _OPEN = data
-        _OPEN_TS = time.time()
-        return data
+        ok = _CAT.get(group)
+        if ok and ahora - ok[0] < TTL_OK_S:
+            return ok[1]
+        fa = _FALLOS.get(group)
+        if fa and ahora - fa[0] < TTL_FALLO_S:
+            raise RuntimeError(fa[1])
+        try:
+            response = _get_instruments_bounded(api, group, timeout=TIMEOUT_CATALOGO_S)
+            instruments = response.get("instruments")
+            if not isinstance(instruments, list):
+                raise RuntimeError("lista de instrumentos ausente")
+            assets = {}
+            for item in instruments:
+                if not isinstance(item, dict) or not item.get("name"):
+                    continue
+                assets[str(item["name"])] = {"open": _abierto_ahora(item, time.time())}
+            if not assets:
+                raise RuntimeError("IQ Option devolvió cero instrumentos")
+        except Exception as exc:
+            msg = "{}: {}".format(group, exc)
+            _FALLOS[group] = (ahora, msg)
+            raise RuntimeError(msg)
+        _FALLOS.pop(group, None)
+        _CAT[group] = (ahora, assets)
+        print("[IQ OPTION] {}: {} instrumentos".format(group, len(assets)))
+        return assets
 
 def _norm(s):
     return ''.join(ch for ch in str(s).upper() if ch.isalnum())
 
+def _activos_estaticos():
+    """Tabla de activos que trae la librería (nombre -> id). No requiere red."""
+    try:
+        from iqoptionapi.constants import ACTIVES
+        return ACTIVES
+    except Exception:
+        return {}
+
+_BIN = {"ts": 0.0, "estado": None, "hilo": None, "res": None}
+_L_BIN = threading.Lock()
+TTL_BIN_S = 60
+VIGENCIA_MAX_BIN_S = 300      # si IQ Option tarda, se usa el último estado real durante como mucho 5 min
+TIMEOUT_BIN_S = 20
+
+
+def estado_binarias(api, timeout=TIMEOUT_BIN_S):
+    """Estado real de los activos de opciones binarias/turbo según IQ Option (get_all_init_v2):
+    {nombre: {'turbo': abierto, 'binary': abierto}} con abierto = enabled y no is_suspended.
+    get-instruments NO responde para los grupos turbo/binary (verificado el 09/11/2026), por eso se usa esta fuente.
+    Consulta en un hilo con tiempo máximo; None si IQ Option no responde (estado desconocido: no se opera)."""
+    ahora = time.time()
+    if _BIN["estado"] is not None and ahora - _BIN["ts"] < TTL_BIN_S:
+        return _BIN["estado"]
+    with _L_BIN:
+        hilo = _BIN["hilo"]
+        if hilo is None or not hilo.is_alive():
+            # Una sola consulta a la vez; quien llegue mientras está en curso ESPERA su resultado (antes recibía None
+            # y el escáner caía a get-instruments, que no responde para binarias, y abortaba el ciclo entero).
+            res = {}
+
+            def _tarea():
+                try:
+                    res["v2"] = api.get_all_init_v2()
+                except Exception as exc:  # noqa: BLE001
+                    res["error"] = exc
+
+            hilo = threading.Thread(target=_tarea, name="iq-init-v2", daemon=True)
+            _BIN.update(hilo=hilo, res=res)
+            hilo.start()
+        res = _BIN["res"]
+    hilo.join(timeout)
+    v2 = res.get("v2")
+    if hilo.is_alive() or not isinstance(v2, dict):
+        return _ultimo_estado_vigente(ahora)
+    estado = {}
+    for opcion in ("turbo", "binary"):
+        for clave, act in ((v2.get(opcion) or {}).get("actives") or {}).items():
+            try:
+                nombre = str(act["name"]).split(".", 1)[-1]
+                abierto = bool(act.get("enabled")) and not bool(act.get("is_suspended"))
+            except (KeyError, TypeError):
+                continue
+            estado.setdefault(nombre, {})[opcion] = abierto
+            if str(clave).isdigit():
+                estado[nombre]["id"] = int(clave)          # id del activo que exige buy()
+    if not estado:
+        return _ultimo_estado_vigente(ahora)
+    _BIN.update(ts=ahora, estado=estado)
+    return estado
+
+
+def _ultimo_estado_vigente(ahora):
+    """Último estado REAL recibido de IQ Option si no tiene más de VIGENCIA_MAX_BIN_S; si no, None (desconocido: no se opera)."""
+    if _BIN["estado"] is not None and ahora - _BIN["ts"] <= VIGENCIA_MAX_BIN_S:
+        return _BIN["estado"]
+    return None
+
+
+_L_CUENTA = threading.RLock()
+
+
+class _Cuenta:
+    """Selecciona la cuenta de IQ Option (PRACTICE o REAL) para UNA operación sensible y la deja en PRACTICE al salir.
+    La librería guarda la cuenta activa en una variable GLOBAL del proceso (global_value.balance_id) que usan buy() y el
+    historial: por eso todo lo que depende de la cuenta se hace dentro de este cerrojo y con la cuenta verificada."""
+    def __init__(self, api, tipo):
+        if tipo not in ("PRACTICE", "REAL"):
+            raise ValueError("Cuenta de IQ Option no válida: " + str(tipo))
+        self.api, self.tipo = api, tipo
+
+    def __enter__(self):
+        _L_CUENTA.acquire()
+        try:
+            if hasattr(self.api, "change_balance") and self.api.get_balance_mode() != self.tipo:
+                self.api.change_balance(self.tipo)
+            modo = self.api.get_balance_mode()
+            if modo != self.tipo:
+                raise RuntimeError(f"No se pudo seleccionar la cuenta {self.tipo} de IQ Option (activa: {modo}).")
+        except BaseException:
+            _L_CUENTA.release()
+            raise
+        return self.api
+
+    def __exit__(self, *exc):
+        try:
+            if self.tipo != "PRACTICE" and hasattr(self.api, "change_balance"):
+                self.api.change_balance("PRACTICE")
+        finally:
+            _L_CUENTA.release()
+        return False
+
+
+def cuenta(api, tipo):
+    return _Cuenta(api, tipo)
+
+
+def id_activo(nombre):
+    """Id numérico del activo para buy(): la tabla estática de la librería o, si falta, el que publica IQ Option."""
+    from iqoptionapi import constants as OP
+    if nombre in OP.ACTIVES:
+        return OP.ACTIVES[nombre]
+    est = _BIN.get("estado") or {}
+    i = (est.get(nombre) or {}).get("id")
+    if i is not None:
+        OP.ACTIVES[nombre] = i                         # la librería lo busca en esta tabla
+    return i
+
+
 def resolve(symbol):
     s=str(symbol).upper().strip()
-    candidates, groups = MAP.get(s, ([s], ['forex','cfd','crypto']))
-    data=_open_times()
+    if s.endswith('-OTC'):
+        candidates, groups = [s], list(GRUPOS_OTC)
+    else:
+        candidates, groups = MAP.get(s, ([s], ['forex','cfd','crypto']))
+    api=_api()
+    if s.endswith('-OTC'):
+        # Opciones binarias: el estado abierto/suspendido sale de get_all_init_v2 (fuente fiable para turbo/binary).
+        est = estado_binarias(api)
+        if est is not None:
+            for nombre, porop in est.items():
+                if _norm(nombre) == _norm(s):
+                    id_activo(nombre)                  # registra el id para velas, cotización y buy()
+                    return nombre, 'turbo', bool(porop.get('turbo', porop.get('binary')))
+            raise LookupError(f'{s}: IQ Option no publica este par en binarias/turbo (get_all_init_v2)')
+    errores=[]
     for group in groups:
-        assets=data.get(group) or {}
+        try:
+            assets=_catalogo_grupo(api, group)
+        except Exception as exc:
+            errores.append(str(exc))
+            continue
         keys={_norm(k):k for k in assets}
         for candidate in candidates:
             key=keys.get(_norm(candidate))
             if key is not None:
                 return key,group,bool((assets.get(key) or {}).get('open'))
+    if errores:
+        # Respaldo sin red: si el catálogo no responde, un par OTC conocido por la librería se
+        # resuelve por su tabla estática. abierto=None = estado desconocido; abrir() lo bloquea.
+        if s.endswith('-OTC') and s in _activos_estaticos():
+            return s, 'estatico', None
+        raise RuntimeError(f'{s}: no se pudo consultar el catálogo IQ Option ({" | ".join(errores)})')
     # No sustituir silenciosamente un instrumento por otro.
     raise LookupError(f'{s}: instrumento no localizado en el catálogo IQ Option para {groups}; revisar símbolo/cobertura de la cuenta')
 

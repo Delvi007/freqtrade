@@ -24,7 +24,7 @@ HOSTS = {"demo": "wss://demo.ctraderapi.com:5036", "live": "wss://live.ctraderap
 PT = {  # ProtoOAPayloadType / ProtoPayloadType
     "HEARTBEAT": 51, "ERROR_COMUN": 50,
     "APP_AUTH_REQ": 2100, "APP_AUTH_RES": 2101, "ACCOUNT_AUTH_REQ": 2102, "ACCOUNT_AUTH_RES": 2103,
-    "NEW_ORDER_REQ": 2106, "CLOSE_POSITION_REQ": 2111, "ASSET_LIST_REQ": 2112, "ASSET_LIST_RES": 2113,
+    "NEW_ORDER_REQ": 2106, "AMEND_POSITION_SLTP_REQ": 2110, "CLOSE_POSITION_REQ": 2111, "ASSET_LIST_REQ": 2112, "ASSET_LIST_RES": 2113,
     "SYMBOLS_LIST_REQ": 2114, "SYMBOLS_LIST_RES": 2115, "SYMBOL_BY_ID_REQ": 2116, "SYMBOL_BY_ID_RES": 2117,
     "TRADER_REQ": 2121, "TRADER_RES": 2122, "RECONCILE_REQ": 2124, "RECONCILE_RES": 2125, "EXECUTION_EVENT": 2126,
     "SUBSCRIBE_SPOTS_REQ": 2127, "SUBSCRIBE_SPOTS_RES": 2128, "UNSUBSCRIBE_SPOTS_REQ": 2129, "UNSUBSCRIBE_SPOTS_RES": 2130,
@@ -40,6 +40,21 @@ EJECUCION = {2: "ORDER_ACCEPTED", 3: "ORDER_FILLED", 4: "ORDER_REPLACED", 5: "OR
 PERIODO = {"1m": 1, "5m": 5, "15m": 7, "30m": 8, "60m": 9, "1h": 9, "4h": 10, "1d": 12, "1wk": 13}
 ESCALA = 100000
 ERRORES_TOKEN = ("CH_ACCESS_TOKEN_INVALID", "OA_AUTH_TOKEN_EXPIRED", "INVALID_ACCESS_TOKEN", "ACCESS_TOKEN_INVALID", "CH_CTID_TRADER_ACCOUNT_NOT_FOUND_BY_TOKEN")
+
+
+_L_HIST = __import__("threading").Lock()
+_ULTIMA_HIST = [0.0]
+INTERVALO_HIST_S = 0.35            # ≈ 3 peticiones de históricos por segundo en todo el proceso (límite de cTrader: 5/s)
+
+
+def _regular_historicos():
+    if SesionCTrader.URL_PRUEBAS:                   # servidor de pruebas local: sin límite
+        return
+    with _L_HIST:
+        espera = _ULTIMA_HIST[0] + INTERVALO_HIST_S - time.monotonic()
+        if espera > 0:
+            time.sleep(espera)
+        _ULTIMA_HIST[0] = time.monotonic()
 
 
 class ErrorCTrader(Exception):
@@ -259,7 +274,8 @@ class SesionCTrader:
     def simbolos(self):
         p = self.pedir(PT["SYMBOLS_LIST_REQ"], {"ctidTraderAccountId": self.ctid}, (PT["SYMBOLS_LIST_RES"],))
         return [{"id": n(s.get("symbolId")), "nombre": s.get("symbolName"), "base": n(s.get("baseAssetId")),
-                 "cotizada": n(s.get("quoteAssetId")), "activo": s.get("enabled", True)} for s in p.get("symbol", [])]
+                 "cotizada": n(s.get("quoteAssetId")), "activo": s.get("enabled", True),
+                 "descripcion": s.get("description"), "categoria": n(s.get("symbolCategoryId"))} for s in p.get("symbol", [])]
 
     def simbolo(self, sid):
         p = self.pedir(PT["SYMBOL_BY_ID_REQ"], {"ctidTraderAccountId": self.ctid, "symbolId": [int(sid)]}, (PT["SYMBOL_BY_ID_RES"],))
@@ -306,6 +322,18 @@ class SesionCTrader:
                 "ts": int(ts_s), "edad_s": max(0, int(ahora - ts_s))}
 
     def velas(self, sid, intervalo, desde_ms, hasta_ms, cuenta=None):
+        """Trendbars con regulador de frecuencia para todo el proceso (cTrader limita las peticiones de históricos) y un
+        reintento con espera si el broker responde que se superó el límite."""
+        for intento in range(3):
+            _regular_historicos()
+            try:
+                return self._velas(sid, intervalo, desde_ms, hasta_ms, cuenta)
+            except ErrorCTrader as e:
+                if "BLOCKED_PAYLOAD_TYPE" not in (e.codigo or "") or intento == 2:
+                    raise
+                time.sleep(2.0 * (intento + 1))
+
+    def _velas(self, sid, intervalo, desde_ms, hasta_ms, cuenta=None):
         per = PERIODO.get(intervalo)
         if not per:
             raise ValueError("Intervalo no disponible en cTrader: " + str(intervalo))
@@ -370,6 +398,33 @@ class SesionCTrader:
         return {"posicion": n(pos.get("positionId") or deal.get("positionId")), "precio": deal.get("executionPrice") or pos.get("price"),
                 "volumen": n(deal.get("filledVolume") or deal.get("volume") or volumen), "comision": n(deal.get("commission"), 0),
                 "moneyDigits": n(deal.get("moneyDigits") or pos.get("moneyDigits"), 2)}
+
+    def modificar_sltp(self, pos_id, stop=None, objetivo=None, espera=15):
+        """ProtoOAAmendPositionSLTPReq: fija stop y objetivo ABSOLUTOS de una posición abierta. Devuelve el evento de ejecución
+        del broker para esa posición; lanza ErrorCTrader si el broker lo rechaza o no responde."""
+        pl = {"ctidTraderAccountId": self.ctid, "positionId": int(pos_id)}
+        if stop is not None:
+            pl["stopLoss"] = float(stop)
+        if objetivo is not None:
+            pl["takeProfit"] = float(objetivo)
+        self._enviar(PT["AMEND_POSITION_SLTP_REQ"], pl)
+        es_suyo = lambda p: n((p.get("position") or {}).get("positionId")) == int(pos_id)   # noqa: E731
+        limite = time.monotonic() + espera
+        while time.monotonic() < limite:
+            ev = next(((pt, p) for pt, p in self.eventos if pt == PT["EXECUTION_EVENT"] and es_suyo(p)), None)
+            if ev:
+                self.eventos.remove(ev)
+                return ev[1]
+            try:
+                pt, p, _ = self.recibir(max(0.1, limite - time.monotonic()))
+            except socket.timeout:
+                break
+            if pt in (PT["ORDER_ERROR_EVENT"], PT["ERROR_RES"]):
+                raise ErrorCTrader(p.get("errorCode", "ERROR"), p.get("description", ""))
+            if pt == PT["EXECUTION_EVENT"] and es_suyo(p):
+                return p
+            self.eventos.append((pt, p))
+        raise ErrorCTrader("TIEMPO_AGOTADO", "cTrader no confirmó la modificación del stop/objetivo")
 
     def cerrar_posicion(self, pos_id, volumen):
         self._enviar(PT["CLOSE_POSITION_REQ"], {"ctidTraderAccountId": self.ctid, "positionId": int(pos_id), "volume": int(volumen)})

@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#04100f">
+<title>TITAN QUANT | Centro de Inteligencia Global</title>
+<link rel="stylesheet" href="tq.css">
+<style>
+:root{--bg:#030908;--panel:rgba(5,23,21,.88);--line:rgba(0,255,190,.28);--green:#00f0a0;--red:#ff405d;--muted:#7fa9a1;--text:#e4fff8;--gold:#e9c66b;--shadow:0 0 22px rgba(0,255,180,.08),inset 0 0 22px rgba(0,255,180,.025)}
+*{box-sizing:border-box}
+html,body{max-width:100%;overflow-x:hidden}
+body{margin:0;background:radial-gradient(ellipse at 52% 28%,#0a2924 0%,#04110f 42%,#020706 100%);color:var(--text);font:14px/1.45 Inter,"Segoe UI",Arial,sans-serif;min-height:100vh}
+.topbar{height:72px;display:flex;align-items:center;gap:20px;padding:0 22px;border-bottom:1px solid var(--line);background:rgba(2,11,10,.92);position:sticky;top:0;z-index:5;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:12px;min-width:240px}
+.brand-mark{width:39px;height:39px;border:2px solid var(--green);transform:rotate(45deg);display:grid;place-items:center;border-radius:8px;box-shadow:0 0 18px #00f0a044}
+.brand-mark span{transform:rotate(-45deg);font-weight:900;color:var(--green);font-size:20px}
+.brand-name{font-size:23px;font-weight:800;letter-spacing:2px}.brand-name em{font-style:normal;color:var(--green)}
+.brand-sub{font-size:9px;letter-spacing:3px;color:#8bb6ad}
+nav.menu{display:flex;gap:5px;flex:1;overflow:auto}
+nav.menu a{color:#a8c7c0;text-decoration:none;padding:10px 13px;border:1px solid transparent;border-radius:7px;white-space:nowrap;font-size:12px}
+nav.menu a:hover,nav.menu a.active{color:var(--green);border-color:var(--line);background:#00e99b12}
+.top-right{display:flex;align-items:center;gap:12px;font-size:11px;color:#a4c4bc;white-space:nowrap}
+.dot{display:inline-block;width:7px;height:7px;background:var(--green);border-radius:50%;box-shadow:0 0 10px var(--green);margin-right:6px}
+.dot.off{background:#5b7a73;box-shadow:none}.dot.warn{background:var(--gold);box-shadow:0 0 10px var(--gold)}
+.aviso{margin:14px;padding:12px;border:1px solid #ff405d66;border-radius:8px;color:#ffb3bf;background:#2a0b12}
+.aviso a{color:var(--green)}
+.ticker{display:flex;border-bottom:1px solid var(--line);background:#061512;overflow:auto}
+.tick{padding:10px 22px;border-right:1px solid #143b33;min-width:150px}
+.tick b{display:block;font-size:12px}.tick span{font-size:12px;color:#b6d1ca}
+main{padding:17px 18px 24px;max-width:1800px;margin:auto}
+.section-head{display:flex;align-items:center;gap:9px;color:var(--green);font-weight:800;letter-spacing:1.5px;font-size:12px;margin:18px 0 12px;scroll-margin-top:90px}
+.section-head:after{content:"";height:1px;flex:1;background:linear-gradient(90deg,var(--line),transparent)}
+.section-head small{color:#729d91;font-weight:400;letter-spacing:0;font-size:10px}
+.panel{background:linear-gradient(145deg,rgba(7,29,26,.92),rgba(3,14,13,.88));border:1px solid var(--line);border-radius:11px;box-shadow:var(--shadow);position:relative;overflow:hidden;padding-bottom:8px}
+.panel-title{padding:12px 14px 8px;color:var(--green);font-weight:800;font-size:12px;letter-spacing:1px}
+.muted{color:#7fa99e}.nodata{color:#6f958c}.up{color:var(--green)!important}.down{color:var(--red)!important}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:13px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+.row{display:flex;justify-content:space-between;gap:10px;padding:8px 14px;border-top:1px solid #15372f;font-size:12px}
+.row span:first-child{color:#8eb0a6}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;color:#72988f;font-weight:500;padding:7px 10px;border-bottom:1px solid #173b33}
+td{padding:8px 10px;border-bottom:1px solid #102b25}
+.engine-grid{display:grid;grid-template-columns:repeat(8,minmax(125px,1fr));gap:9px}
+.engine{padding:12px 10px 11px;min-height:120px;background:linear-gradient(145deg,rgba(7,29,26,.92),rgba(3,14,13,.88));border:1px solid var(--line);border-radius:11px;position:relative;overflow:hidden}
+.engine-top{display:flex;align-items:center;justify-content:space-between;color:#cce9e1;font-size:10px;font-weight:700;min-height:24px}
+.engine-state{margin-top:10px;font-size:11px;color:#8db6ab}
+.engine-foot{margin-top:8px;font-size:9px;color:#80a99e;word-break:break-word}
+.engine.err{border-color:#ff405d88}.engine.err .engine-state{color:#ff8fa0}
+.lower{display:grid;grid-template-columns:1.2fr 1fr;gap:13px;margin-top:15px}
+.globe{width:180px;height:180px;margin:20px auto;border-radius:50%;background:radial-gradient(circle at 34% 28%,#1b8270 0%,#0b473e 25%,#05231f 58%,#020c0b 78%);box-shadow:inset -25px -12px 40px #000,0 0 45px #00f0a044}
+.disclaimer{color:#b6a46e;font-size:10px;text-align:center;margin-top:12px}
+.footer{margin-top:15px;text-align:center;color:#638b80;font-size:10px;letter-spacing:1.2px;padding:13px;border-top:1px solid #14372f}
+@media(max-width:1100px){.grid3{grid-template-columns:1fr 1fr}.engine-grid{grid-template-columns:repeat(4,1fr)}.lower{grid-template-columns:1fr}}
+@media(max-width:700px){.topbar{height:auto;padding:10px;gap:8px}nav.menu{order:3;width:100%}nav.menu a{padding:8px;font-size:10px}.grid3,.grid2{grid-template-columns:1fr}.engine-grid{grid-template-columns:repeat(2,minmax(0,1fr))}main{padding:12px 9px}.tick{min-width:125px}}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark"><span>T</span></div>
+    <div><div class="brand-name">TITAN <em>QUANT</em></div><div class="brand-sub">INTELIGENCIA FINANCIERA GLOBAL</div></div>
+  </div>
+  <nav class="menu" aria-label="Secciones">
+    <a class="active" href="#inicio">Inicio</a>
+    <a href="#mercados">Mercados</a>
+    <a href="#motores">Motores IA</a>
+    <a href="#laboratorio">Laboratorio</a>
+    <a href="#alertas">Alertas</a>
+    <a href="/">Aplicación completa</a>
+  </nav>
+  <div class="top-right">
+    <span id="estadoConexion"><i class="dot off"></i>Conectando…</span>
+    <span id="usuario" class="muted"></span>
+    <span id="reloj">--:--:--</span>
+  </div>
+</header>
+
+<div class="ticker" id="cinta" aria-label="Cotizaciones"><div class="tick"><b>—</b><span class="nodata">Cargando cotizaciones…</span></div></div>
+
+<main id="inicio">
+  <div id="avisoSesion"></div>
+
+  <section>
+    <div class="section-head">◈ ESTADO DEL EQUIPO Y NIVEL <small>· datos del servidor</small></div>
+    <div class="grid3">
+      <div class="panel">
+        <div class="panel-title">CAPACIDAD</div>
+        <div class="row"><span>CPU, uso</span><span id="hwCpu" class="nodata">—</span></div>
+        <div class="row"><span>Memoria libre</span><span id="hwMem" class="nodata">—</span></div>
+        <div class="row"><span>Disco libre</span><span id="hwDisco" class="nodata">—</span></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">NIVEL</div>
+        <div class="row"><span>Nivel elegido</span><span id="nivelElegido" class="nodata">—</span></div>
+        <div class="row"><span>Política</span><span id="politica" class="nodata">—</span></div>
+        <div class="row"><span>Recomendado por el equipo</span><span id="nivelRec" class="nodata">—</span></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">ALERTAS</div>
+        <div class="row"><span>Total visibles</span><span id="alTotal" class="nodata">—</span></div>
+        <div class="row"><span>Nuevas</span><span id="alNuevas" class="nodata">—</span></div>
+        <div class="row"><span>Críticas nuevas</span><span id="alCriticas" class="nodata">—</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="mercados">
+    <div class="section-head">◈ MERCADOS <small>· Yahoo Finance, puede retrasarse hasta 15 minutos</small></div>
+    <div class="panel">
+      <table>
+        <thead><tr><th>ACTIVO</th><th>PRECIO</th><th>24H</th><th>FUENTE</th></tr></thead>
+        <tbody id="tablaMercados"><tr><td colspan="4" class="nodata">Cargando…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="motores">
+    <div class="section-head">⬡ MOTORES IA <small id="motoresResumen">· cargando…</small></div>
+    <div class="engine-grid" id="rejillaMotores"></div>
+  </section>
+
+  <section class="lower" id="laboratorio">
+    <div class="panel">
+      <div class="panel-title">◈ LABORATORIO DE APRENDIZAJE</div>
+      <div id="labContenido" class="nodata" style="padding:0 14px 10px">Cargando…</div>
+    </div>
+    <div class="panel" id="alertas">
+      <div class="panel-title">◈ NOTICIAS</div>
+      <div style="padding:0 14px 12px" class="nodata">Sin fuente de noticias conectada. Esta sección se llenará cuando se conecte un proveedor verificado.</div>
+      <div class="globe" aria-hidden="true"></div>
+    </div>
+  </section>
+
+  <div class="disclaimer">TODOS LOS DATOS PROVIENEN DEL SERVIDOR O DE YAHOO FINANCE · NO SE EJECUTAN ÓRDENES DESDE ESTA PÁGINA</div>
+  <footer class="footer">TITAN QUANT · ANALIZAR · PROCESAR · APRENDER · SIMULAR</footer>
+</main>
+
+<script src="tq_auth.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  function $(id) { return document.getElementById(id); }
+
+  // Escribe texto con textContent: nunca se inserta HTML de datos del servidor.
+  function poner(id, texto, clase) {
+    var el = $(id);
+    if (!el) return;
+    el.textContent = (texto === null || texto === undefined || texto === '') ? '—' : String(texto);
+    el.className = clase || '';
+  }
+
+  function celda(tr, texto, clase) {
+    var td = document.createElement('td');
+    td.textContent = (texto === null || texto === undefined || texto === '') ? '—' : String(texto);
+    if (clase) td.className = clase;
+    tr.appendChild(td);
+    return td;
+  }
+
+  function fechaHora(ts) {
+    if (!ts) return '—';
+    return new Date(Number(ts) * 1000).toLocaleString('es-DO', { hour12: false });
+  }
+
+  function pct(v) {
+    if (v === null || v === undefined || isNaN(v)) return '—';
+    return (v > 0 ? '+' : '') + Number(v).toFixed(2) + '%';
+  }
+
+  async function pedir(ruta) {
+    var r = await fetch(ruta, { cache: 'no-store', credentials: 'same-origin' });
+    var d = {};
+    try { d = await r.json(); } catch (e) { d = {}; }
+    if (!r.ok || d.ok === false) {
+      var err = new Error(d.error || ('HTTP ' + r.status));
+      err.status = r.status;
+      throw err;
+    }
+    return d;
+  }
+
+  // ----------------------------------------------------------------- reloj
+  function reloj() { poner('reloj', new Date().toLocaleTimeString('es-DO', { hour12: false })); }
+
+  // ----------------------------------------------------------------- capacidad y nivel
+  async function cargarHardware() {
+    try {
+      var d = await pedir('/api/tq/hardware');
+      var dg = d.diagnostico || {};
+      var cpu = dg.cpu || {};
+      var mem = dg.memoria || {};
+      var disco = dg.disco || {};
+      poner('hwCpu', cpu.uso_pct !== null && cpu.uso_pct !== undefined ? cpu.uso_pct + '% (' + (cpu.nucleos || '?') + ' núcleos)' : '—');
+      poner('hwMem', mem.disponible_mb !== null && mem.disponible_mb !== undefined ? mem.disponible_mb + ' MB' : '—');
+      poner('hwDisco', disco.libre_gb !== null && disco.libre_gb !== undefined ? disco.libre_gb + ' GB' : '—');
+      var rec = d.recomendacion || {};
+      poner('nivelRec', rec.recomendado || '—');
+    } catch (e) {
+      poner('hwCpu', 'Sin datos: ' + e.message);
+    }
+  }
+
+  async function cargarNiveles() {
+    try {
+      var d = await pedir('/api/tq/niveles');
+      var s = d.seleccion || {};
+      poner('nivelElegido', s.nivel || '—');
+      poner('politica', s.politica || '—');
+    } catch (e) {
+      poner('nivelElegido', 'Sin datos');
+    }
+  }
+
+  // ----------------------------------------------------------------- alertas
+  async function cargarAlertas() {
+    try {
+      var d = await pedir('/api/tq/alertas/contadores');
+      poner('alTotal', d.total);
+      poner('alNuevas', d.nuevas);
+      poner('alCriticas', d.criticas);
+    } catch (e) {
+      poner('alTotal', 'Sin datos');
+    }
+  }
+
+  // ----------------------------------------------------------------- motores (23 reales)
+  async function cargarMotores() {
+    var rejilla = $('rejillaMotores');
+    try {
+      var d = await pedir('/api/tq/motores');
+      var lista = d.motores || [];
+      rejilla.textContent = '';
+      var conError = 0;
+      lista.forEach(function (m) {
+        var card = document.createElement('div');
+        var tieneError = !!m.ultimo_error || m.estado === 'error';
+        if (tieneError) conError++;
+        card.className = 'engine' + (tieneError ? ' err' : '');
+
+        var top = document.createElement('div');
+        top.className = 'engine-top';
+        top.textContent = String(m.numero).padStart(2, '0') + ' · ' + (m.nombre || m.id);
+        var dot = document.createElement('span');
+        dot.className = 'dot ' + (tieneError ? '' : (m.estado === 'sin_ejecutar' ? 'off' : 'warn'));
+        dot.style.marginLeft = '6px';
+        top.appendChild(dot);
+        card.appendChild(top);
+
+        var estado = document.createElement('div');
+        estado.className = 'engine-state';
+        var etiqueta = { sin_ejecutar: 'Sin ejecutar', ok: 'Correcto', error: 'Error', aplazado: 'Aplazado' }[m.estado] || m.estado || 'Sin ejecutar';
+        estado.textContent = etiqueta + (m.en_analisis === false ? ' · infraestructura' : '');
+        card.appendChild(estado);
+
+        var pie = document.createElement('div');
+        pie.className = 'engine-foot';
+        pie.textContent = (m.ultimo_ts ? 'Última: ' + fechaHora(m.ultimo_ts) : 'Nunca ejecutado') +
+                          ' · ejecuciones ' + (m.ejecuciones || 0) + ' · errores ' + (m.errores || 0);
+        card.appendChild(pie);
+
+        if (m.ultimo_error) {
+          var e = document.createElement('div');
+          e.className = 'engine-foot';
+          e.style.color = '#ff8fa0';
+          e.textContent = 'Último error: ' + String(m.ultimo_error).slice(0, 160);
+          card.appendChild(e);
+        }
+        rejilla.appendChild(card);
+      });
+      var nEjec = lista.filter(function (m) { return m.estado !== 'sin_ejecutar'; }).length;
+      $('motoresResumen').textContent = '· ' + lista.length + ' motores · ' + nEjec + ' con ejecuciones · ' + conError + ' con error';
+    } catch (e) {
+      rejilla.textContent = '';
+      var msg = document.createElement('div');
+      msg.className = 'nodata';
+      msg.textContent = 'No se pudo leer el estado de los motores: ' + e.message;
+      rejilla.appendChild(msg);
+      $('motoresResumen').textContent = '· sin datos';
+    }
+  }
+
+  // ----------------------------------------------------------------- laboratorio
+  async function cargarLaboratorio() {
+    var cont = $('labContenido');
+    try {
+      var d = await pedir('/api/lab/estado');
+      cont.textContent = '';
+      Object.keys(d).forEach(function (k) {
+        if (k === 'ok') return;
+        var v = d[k];
+        var fila = document.createElement('div');
+        fila.className = 'row';
+        var nombre = document.createElement('span');
+        nombre.textContent = k;
+        var valor = document.createElement('span');
+        if (v !== null && typeof v === 'object') {
+          valor.textContent = Array.isArray(v) ? v.length + ' elementos' : Object.keys(v).length + ' campos';
+        } else {
+          valor.textContent = (v === null || v === undefined) ? '—' : String(v);
+        }
+        fila.appendChild(nombre);
+        fila.appendChild(valor);
+        cont.appendChild(fila);
+      });
+      if (!cont.childNodes.length) cont.textContent = 'Sin datos del laboratorio.';
+    } catch (e) {
+      cont.textContent = 'Sin datos del laboratorio: ' + e.message + (e.status === 403 ? ' (solo para el propietario)' : '');
+    }
+  }
+
+  // ----------------------------------------------------------------- mercados
+  var SIMBOLOS = ['GC=F', 'BTC-USD', 'ES=F'];
+  var ETIQUETAS = { 'GC=F': 'Oro (futuros)', 'BTC-USD': 'Bitcoin', 'ES=F': 'S&P 500 (futuros)' };
+
+  async function cargarMercados() {
+    var tbody = $('tablaMercados');
+    var cinta = $('cinta');
+    try {
+      var d = await pedir('/api/quotes?symbols=' + encodeURIComponent(SIMBOLOS.join(',')));
+      var lista = d.cotizaciones || [];
+      tbody.textContent = '';
+      cinta.textContent = '';
+      lista.forEach(function (c) {
+        var tr = document.createElement('tr');
+        celda(tr, c.mostrar || ETIQUETAS[c.simbolo] || c.simbolo, 'symbol');
+        if (c.error) {
+          celda(tr, '—', 'nodata');
+          celda(tr, '—', 'nodata');
+          celda(tr, 'Sin datos (' + c.error + ')', 'nodata');
+        } else {
+          celda(tr, c.precio);
+          var cambio = celda(tr, pct(c.cambio_pct));
+          if (c.cambio_pct > 0) cambio.className = 'up';
+          if (c.cambio_pct < 0) cambio.className = 'down';
+          celda(tr, (c.fuente || 'Yahoo') + ' · retrasado');
+        }
+        tbody.appendChild(tr);
+
+        var t = document.createElement('div');
+        t.className = 'tick';
+        var b = document.createElement('b');
+        b.textContent = c.mostrar || c.simbolo;
+        var s = document.createElement('span');
+        s.textContent = c.error ? 'Sin datos' : (String(c.precio) + ' ' + pct(c.cambio_pct));
+        t.appendChild(b);
+        t.appendChild(s);
+        cinta.appendChild(t);
+      });
+      if (!lista.length) {
+        tbody.innerHTML = '';
+        var vacia = document.createElement('tr');
+        celda(vacia, 'Sin cotizaciones devueltas por el servidor', 'nodata');
+        tbody.appendChild(vacia);
+      }
+    } catch (e) {
+      tbody.textContent = '';
+      var tr2 = document.createElement('tr');
+      celda(tr2, 'Sin datos de mercado: ' + e.message, 'nodata');
+      tbody.appendChild(tr2);
+      cinta.textContent = '';
+      var t2 = document.createElement('div');
+      t2.className = 'tick';
+      t2.textContent = 'Sin datos de mercado';
+      cinta.appendChild(t2);
+    }
+  }
+
+  // ----------------------------------------------------------------- arranque
+  async function iniciar() {
+    setInterval(reloj, 1000);
+    reloj();
+    if (window.TQ && TQ.cargarSesion) await TQ.cargarSesion();
+    var u = window.TQ && TQ.usuario;
+    if (!u) {
+      $('avisoSesion').innerHTML = '';
+      var aviso = document.createElement('div');
+      aviso.className = 'aviso';
+      aviso.textContent = 'No has iniciado sesión. ';
+      var enlace = document.createElement('a');
+      enlace.href = '/';
+      enlace.textContent = 'Entrar a TITAN QUANT';
+      aviso.appendChild(enlace);
+      $('avisoSesion').appendChild(aviso);
+      $('estadoConexion').innerHTML = '<i class="dot off"></i>Sin sesión';
+      return;
+    }
+    poner('usuario', u.nombre || u.correo || '');
+    $('estadoConexion').innerHTML = '<i class="dot"></i>Conectado';
+
+    await Promise.all([cargarHardware(), cargarNiveles(), cargarAlertas(), cargarMotores(), cargarLaboratorio(), cargarMercados()]);
+    setInterval(function () { cargarMotores(); cargarHardware(); cargarAlertas(); }, 30000);
+    setInterval(cargarMercados, 60000);
+  }
+
+  iniciar();
+})();
+</script>
+</body>
+</html>

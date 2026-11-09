@@ -1,6 +1,6 @@
 # TITAN QUANT v7
 
-TITAN QUANT es una plataforma de inteligencia cuantitativa con 23 motores, cuentas de usuario, credenciales cifradas, un bot operador en simulación, alertas y un historial que no borra nada.
+TITAN QUANT es una plataforma de inteligencia cuantitativa con 23 motores, cuentas de usuario, credenciales cifradas, dos bots que operan directamente en su broker (binarias en IQ Option PRACTICE y cTrader en la cuenta DEMO; sin simulación interna, REAL bloqueado), dos motores de backtesting independientes, alertas y un historial que no borra nada.
 
 - **Instalar en Termux:** consulta `docs/DEPLOYMENT_GUIDE.md`.
 - **Qué está hecho y qué no:** consulta `docs/IMPLEMENTATION_STATUS.md`.

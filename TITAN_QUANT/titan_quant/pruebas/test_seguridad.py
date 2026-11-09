@@ -1,4 +1,5 @@
 """Pruebas de seguridad: cifrado, contraseñas, cuentas, sesiones, tokens, bloqueo y bóveda."""
+import os
 import time
 
 from titan_quant import config, db
@@ -33,6 +34,8 @@ class TestCripto(Base):
         k1 = cripto.clave_maestra()
         cripto._CACHE.clear()
         self.assertEqual(k1, cripto.clave_maestra())
+        if os.name == "nt":
+            self.skipTest("Permisos POSIX no aplican en Windows: la ACL de la clave se revisa con icacls (ver instrucciones)")
         self.assertEqual(oct(config.CLAVE_MAESTRA.stat().st_mode & 0o777), "0o600")
 
     def test_hash_contrasena_y_fallback(self):
@@ -174,6 +177,8 @@ class TestDB(Base):
         self.assertEqual(v1, len(db.MIGRACIONES))
         r = db.respaldar()
         self.assertTrue(r.exists())
+        if os.name == "nt":
+            self.skipTest("Permisos POSIX no aplican en Windows: la ACL de las copias se revisa con icacls")
         self.assertEqual(oct(r.stat().st_mode & 0o777), "0o600")
 
     def test_transaccion_revierte(self):

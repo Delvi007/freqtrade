@@ -14,9 +14,11 @@ import time
 from . import config, db
 
 TIPOS = {"analisis": "Análisis", "alerta": "Alertas",
-         "operacion_simulacion": "Operaciones · Simulación", "operacion_demo": "Operaciones · DEMO", "operacion_real": "Operaciones · REAL",
-         "decision_simulacion": "Bot · Simulación", "decision_demo": "Bot · DEMO", "decision_real": "Bot · REAL",
-         "config": "Cambios de configuración", "evento": "Eventos relevantes", "plan": "Planes (web)", "lab": "Laboratorio"}
+         "operacion_demo": "Operaciones · cTrader (DEMO)", "operacion_binaria": "Operaciones · Binarias (IQ Option PRACTICE)",
+         "operacion_real": "Operaciones · REAL (bloqueada)",
+         "decision_demo": "Bot · cTrader (DEMO)", "decision_binaria": "Bot · Binarias (IQ Option PRACTICE)", "decision_real": "Bot · REAL (bloqueada)",
+         "config": "Cambios de configuración", "evento": "Eventos relevantes", "plan": "Planes (web)",
+         "lab": "Laboratorio · ARCHIVO de la simulación retirada"}
 FRASE_ELIMINAR = "ELIMINAR PERMANENTEMENTE"
 
 
@@ -88,11 +90,11 @@ def listar(uid, tipo, ver="normal", limite=100, es_propietario=False):
     elif tipo == "plan":
         filas = _legado("titan_planes.db", "SELECT id, creado_ts ts, simbolo, mostrar, modo, direccion, tipo, entrada, stop, tp1, tp2, estado, resultado, r_final FROM planes ORDER BY id DESC LIMIT ?", (limite * 3,)) if es_propietario else []
         for f in filas:
-            f["modalidad"] = "simulacion"
+            f["modalidad"] = "archivo_simulacion"
     elif tipo == "lab":
         filas = _legado("titan_lab.db", "SELECT id, motor, creado_ts ts, simbolo, estrategia, direccion, estado, resultado, r_neto FROM lab_trades ORDER BY id DESC LIMIT ?", (limite * 3,)) if es_propietario else []
         for f in filas:
-            f["modalidad"] = "simulacion"
+            f["modalidad"] = "archivo_simulacion"
     else:
         raise ValueError("Tipo desconocido")
     return _filtrar(filas, _vis(uid, tipo), ver)[:limite]

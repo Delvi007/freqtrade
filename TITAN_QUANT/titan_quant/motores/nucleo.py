@@ -69,7 +69,7 @@ def resolver_activo(simbolo):
 
 
 def analizar(simbolo, horizonte="corto", nivel="intermedio", politica="automatico", usuario_id=None,
-             cartera=None, riesgo=None, diag=None, presupuesto_s=None, serie=None):
+             cartera=None, riesgo=None, diag=None, presupuesto_s=None, serie=None, explorar=False):
     """serie: velas ya obtenidas (p. ej. del broker cTrader) para analizar con los mismos precios con los que se ejecuta."""
     niveles.validar_horizonte(horizonte)
     activo = resolver_activo(simbolo)
@@ -77,7 +77,7 @@ def analizar(simbolo, horizonte="corto", nivel="intermedio", politica="automatic
     diag = diag or recursos.diagnostico(red=False)
     p, ajustes = recursos.plan_ejecucion(nivel, politica, diag)
     ctx = {"activo": activo, "horizonte": horizonte, "p": p, "politica": politica, "res": {}, "usuario_id": usuario_id,
-           "diagnostico": diag, "ajustes_adaptativos": ajustes,
+           "diagnostico": diag, "ajustes_adaptativos": ajustes, "explorar": bool(explorar),
            "cartera": cartera if cartera is not None else _estado_bot().get("seleccion", []),
            "riesgo_usuario": riesgo, "serie_externa": serie}
     ids = [m.id for m in base.REGISTRO.values() if m.en_analisis]

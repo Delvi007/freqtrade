@@ -19,15 +19,7 @@ def C(id_, etiqueta, secreto=False, requerido=True, tipo="text", opciones=None, 
 
 
 CATALOGO = {
-    "yahoo_finance": {"nombre": "Yahoo Finance", "grupo": "Datos financieros", "descripcion": "Velas y cotizaciones (no oficial, gratuito). Fuente principal de los motores.", "campos": []},
-    "google_news": {"nombre": "Google News RSS", "grupo": "Noticias", "descripcion": "Titulares por activo y eventos macro.", "campos": []},
-    "finnhub": {"nombre": "Finnhub", "grupo": "Datos financieros", "descripcion": "Cotizaciones y noticias con clave gratuita.",
-                "campos": [C("api_key", "API Key", True)]},
-    "alpha_vantage": {"nombre": "Alpha Vantage", "grupo": "Datos macroeconómicos", "descripcion": "Series de mercado y macro con clave gratuita.",
-                      "campos": [C("api_key", "API Key", True)]},
-    "anthropic": {"nombre": "Claude API (Anthropic)", "grupo": "Inteligencia artificial", "descripcion": "Clave para servicios de IA externos (opcional).",
-                  "campos": [C("api_key", "API Key", True)]},
-    "correo_smtp": {"nombre": "Correo (SMTP)", "grupo": "Correo electrónico",
+    "correo_smtp": {"nombre": "Correo (SMTP)", "grupo": "Correo electrónico", "ubicacion": "configuracion",
                     "descripcion": ("Envía la confirmación de cuenta, el aviso de solicitudes, la aceptación y la recuperación. "
                                     "Recomendado: Gmail con contraseña de aplicación, o Brevo. Hotmail/Outlook.com personal NO sirve: "
                                     "Microsoft desactivó el SMTP con contraseña."),
@@ -38,7 +30,8 @@ CATALOGO = {
                                C("remitente", "Remitente (normalmente el mismo correo)", requerido=False),
                                C("host", "Servidor SMTP", requerido=False), C("puerto", "Puerto", tipo="number", requerido=False),
                                C("seguridad", "Seguridad", tipo="select", opciones=["ssl", "starttls"], requerido=False)]},
-    "telegram": {"nombre": "Telegram", "grupo": "Telegram", "descripcion": "Bot para alertas y para el menú interactivo existente.",
+    "telegram": {"nombre": "Telegram", "grupo": "Telegram", "ubicacion": "configuracion",
+                 "descripcion": "Bot para alertas y para el menú interactivo existente.",
                  "campos": [C("token", "Token del bot (@BotFather)", True), C("chat_id", "ID del chat autorizado", True)]},
     "iqoption": {"nombre": "IQ Option", "grupo": "Brokers", "descripcion": "Adaptador NO OFICIAL (librería iqoptionapi). Solo lectura y cuenta PRACTICE.",
                  "campos": [C("correo", "Correo de la cuenta"), C("clave", "Contraseña", True)], "broker": True},
@@ -47,8 +40,6 @@ CATALOGO = {
                            C("redirect_uri", "Redirect URI", ayuda="Debe coincidir con la registrada en la app de cTrader"),
                            C("access_token", "Access token", True, requerido=False), C("refresh_token", "Refresh token", True, requerido=False)],
                 "broker": True, "oauth": True},
-    "personalizado": {"nombre": "Servicio personalizado", "grupo": "Otros servicios", "descripcion": "Guarda de forma cifrada la clave de otro servicio.",
-                      "campos": [C("nombre", "Nombre"), C("url", "URL o endpoint", requerido=False), C("clave", "Clave", True)]},
 }
 
 
@@ -101,7 +92,8 @@ def listar(uid):
         out.append({"proveedor": prov, "nombre": cat["nombre"], "grupo": cat["grupo"], "descripcion": cat["descripcion"],
                     "campos": campos, "estado": estado_calculado(uid, prov, fila), "activa": bool(fila["activa"]) if fila else True,
                     "ultima_prueba_ts": fila["ultima_prueba_ts"] if fila else None, "resultado": fila["resultado"] if fila else None,
-                    "error": fila["error"] if fila else None, "broker": bool(cat.get("broker")), "oauth": bool(cat.get("oauth"))})
+                    "error": fila["error"] if fila else None, "broker": bool(cat.get("broker")), "oauth": bool(cat.get("oauth")),
+                    "ubicacion": cat.get("ubicacion", "integraciones")})
     return out
 
 
@@ -169,28 +161,6 @@ def _config(uid, prov):
 
 def _probar(uid, prov):
     cfg = _config(uid, prov)
-    if prov == "yahoo_finance":
-        from .motores import datos
-        s = datos.obtener("EURUSD=X", "5d", "60m")
-        return f"{len(s['c'])} velas de EURUSD=X; último {s['c'][-1]:.5f}"
-    if prov == "google_news":
-        st, b = _http("https://news.google.com/rss/search?q=gold&hl=en-US&gl=US&ceid=US:en")
-        return f"HTTP {st}, {b.count(b'<item>')} titulares"
-    if prov == "finnhub":
-        st, b = _http("https://finnhub.io/api/v1/quote?symbol=AAPL&token=" + urllib.parse.quote(cfg["api_key"]))
-        d = json.loads(b)
-        if not d.get("c"):
-            raise RuntimeError("respuesta sin cotización (clave no válida o límite)")
-        return f"AAPL {d['c']}"
-    if prov == "alpha_vantage":
-        st, b = _http("https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=IBM&apikey=" + urllib.parse.quote(cfg["api_key"]))
-        d = json.loads(b)
-        if "Global Quote" not in d or not d["Global Quote"]:
-            raise RuntimeError(d.get("Note") or d.get("Information") or d.get("Error Message") or "sin datos")
-        return "IBM " + d["Global Quote"].get("05. price", "?")
-    if prov == "anthropic":
-        st, b = _http("https://api.anthropic.com/v1/models", {"x-api-key": cfg["api_key"], "anthropic-version": "2023-06-01"})
-        return f"HTTP {st}: clave aceptada"
     if prov == "telegram":
         st, b = _http(f"https://api.telegram.org/bot{cfg['token']}/getMe")
         d = json.loads(b)
@@ -209,8 +179,6 @@ def _probar(uid, prov):
         vivas = sum(1 for x in cuentas if x["real"])
         permiso = "con permiso de trading" if info.get("trading") else "SOLO LECTURA: vuelve a autorizar para operar"
         return f"{len(cuentas)} cuentas ({vivas} reales, {len(cuentas) - vivas} demo), {permiso}"
-    if prov == "personalizado":
-        return "Credencial guardada (sin prueba automática para servicios personalizados)"
     raise ValueError("Sin prueba para " + prov)
 
 
@@ -222,8 +190,6 @@ def probar(uid, prov):
         return {"estado": est, "resultado": None, "error": "Configura y activa la integración antes de probarla."}
     try:
         res, estado, err = _probar(uid, prov), "conectada", None
-        if prov == "personalizado":
-            estado = "configurada"
     except Exception as e:
         res, estado = None, "error"
         err = f"{type(e).__name__}: {str(e)[:160]}"

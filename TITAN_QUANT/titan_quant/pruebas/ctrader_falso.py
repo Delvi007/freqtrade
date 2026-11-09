@@ -49,6 +49,7 @@ class Mundo:
         self.ids = itertools.count(100)
         self.L = threading.RLock()
         self.ordenes = []                 # registro de todas las órdenes recibidas (para las aserciones)
+        self.modificaciones = []          # modificaciones de SL/TP recibidas (2110)
         self.enum_como_texto = False      # alterna la forma de los enums en las respuestas
         self.velas_n = 400
 
@@ -255,6 +256,21 @@ class _Manejador(socketserver.BaseRequestHandler):
             self.enviar(2126, {"ctidTraderAccountId": ctid, "executionType": self._enum(3, "ORDER_FILLED"),
                                "position": {"positionId": pid, "positionStatus": 2, "tradeData": {"symbolId": pos["symbolId"], "volume": 0}},
                                "deal": d}, mid)
+        elif pt == 2110:
+            pid = int(p["positionId"])
+            if pid not in c["posiciones"]:
+                return self.error("POSITION_NOT_FOUND", "Position not found", mid, ctid)
+            pos = c["posiciones"][pid]
+            bid, ask = W.precios[pos["symbolId"]]
+            compra = pos["side"] == 1
+            sl = p.get("stopLoss", pos["sl"])
+            if sl is not None and ((compra and sl >= bid) or (not compra and sl <= ask)):
+                return self.enviar(2132, {"ctidTraderAccountId": ctid, "errorCode": "TRADING_BAD_STOPS", "description": "SL al otro lado del precio"}, mid)
+            pos["sl"], pos["tp"] = sl, p.get("takeProfit", pos["tp"])
+            W.modificaciones.append({"ctid": ctid, "positionId": pid, "sl": pos["sl"], "tp": pos["tp"]})
+            self.enviar(2126, {"ctidTraderAccountId": ctid, "executionType": self._enum(4, "ORDER_REPLACED"),
+                               "position": {"positionId": pid, "price": pos["price"], "stopLoss": pos["sl"], "takeProfit": pos["tp"],
+                                            "tradeData": {"symbolId": pos["symbolId"], "volume": pos["volume"], "tradeSide": pos["side"]}}}, mid)
         elif pt == 2124:
             self.enviar(2125, {"ctidTraderAccountId": ctid, "position": [
                 {"positionId": str(k), "price": v["price"], "stopLoss": v["sl"], "takeProfit": v["tp"], "moneyDigits": 2,

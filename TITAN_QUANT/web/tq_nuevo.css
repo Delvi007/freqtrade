@@ -1,0 +1,17 @@
+﻿/* TITAN QUANT - barra superior fija (solo escritorio, >= 900 px).
+   No cambia IDs, botones ni JavaScript: solo reorganiza el menu lateral existente en horizontal. */
+@media (min-width: 900px) {
+  .app { display: block !important; }
+  .side {
+    display: flex !important; position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    align-items: center; gap: 12px; height: 62px; padding: 0 16px !important;
+    background: #0a111d; border-right: 0 !important; border-bottom: 1px solid var(--line);
+  }
+  .side .brand { padding: 0 10px 0 0; font-size: 14px; white-space: nowrap; }
+  .side .brand small { display: none; }
+  .side .nav { display: flex; flex-direction: row; align-items: center; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; }
+  .side .nav .muted { display: none; }
+  .side .nav button { width: auto; white-space: nowrap; margin: 0; padding: 8px 10px; font-size: 12px; }
+  .side .hint { display: none; }
+  main { margin-top: 62px; }
+}

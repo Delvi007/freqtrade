@@ -3,7 +3,16 @@
   servidor                   Arranca la plataforma web (http://127.0.0.1:8765).
   migrar                     Crea/actualiza las bases de datos (con respaldo previo).
   probar                     Ejecuta TODAS las pruebas sobre una copia temporal (no toca tus datos).
-  respaldar                  Copia consistente de todas las bases (principal, conocimiento, simulación, demo y real).
+  respaldar                  Copia consistente de todas las bases (principal, conocimiento, cuentas y backtesting).
+  backtest-binaria recopilar ACTIVO [--velas N] | importar-sonda RUTA ACTIVO | ejecutar ACTIVO [--payout P] [--k K] | informes
+                             Backtesting del bot de binarias (histórico IQ Option, base propia). Resultados CALCULADOS.
+  backtest-ctrader recopilar CUENTA_DEMO SIMBOLO [--intervalo 15m] [--dias 60] | ejecutar SIMBOLO [--intervalo 15m]
+                   [--estrategia ema_rsi_atr|keltner_rci_atr] [--costo PCT] | informes
+                             Backtesting del bot cTrader (histórico cTrader DEMO, base propia). Resultados CALCULADOS.
+  verificar-brokers [--iq] [--ctrader CUENTA_DEMO SIMBOLO] [--enviar]
+                             Prueba VERIFICABLE de los conectores: conexión, cuenta PRACTICE/DEMO, saldo, datos y, con
+                             --enviar, una orden mínima real en PRACTICE (1 USD) y en DEMO (volumen mínimo), con su
+                             confirmación, cierre y resultado leídos del broker. Nunca usa cuentas reales.
   importar-secretos [--borrar-originales] [--ctrader RUTA]
                              Cifra en la bóveda los secretos de .iqoption.env, .telegram_token/.telegram_chat
                              y los JSON de cTrader; con --borrar-originales sobrescribe y elimina los archivos en claro.
@@ -43,11 +52,12 @@ def respaldar():
     dest = config.RESPALDOS / sello
     dest.mkdir(parents=True, exist_ok=True)
     os.chmod(dest, 0o700)
-    for ruta in (config.DB_PRINCIPAL, config.DATOS / "conocimiento.db", RAIZ / "titan_activos.db", RAIZ / "titan_planes.db", RAIZ / "titan_lab.db"):
+    for ruta in (config.DB_PRINCIPAL, config.DATOS / "conocimiento.db", RAIZ / "titan_activos.db", RAIZ / "titan_planes.db", RAIZ / "titan_lab.db",
+                 config.DATOS / "backtest_binaria" / "historico.db", config.DATOS / "backtest_ctrader" / "historico.db"):
         if ruta.exists():
             r = db.respaldar(dest / ruta.name, ruta)
             print("  ✔", r)
-    for m in ("simulacion", "demo", "real"):            # cada cuenta en su propio archivo de respaldo
+    for m in ("demo", "binaria", "real", "simulacion"):  # cada cuenta en su archivo; simulacion.db = archivo retirado, si existe
         ruta = config.DATOS / "cuentas" / f"{m}.db"
         if ruta.exists():
             print("  ✔", db.respaldar(dest / f"cuenta_{m}.db", ruta))
@@ -225,7 +235,7 @@ def probar():
     copia = tmp / "TITAN"
     shutil.copytree(RAIZ, copia, ignore=shutil.ignore_patterns("__pycache__", "datos", "*.db", "*.db-wal", "*.db-shm", ".telegram*",
                                                                 "*.env", ".estado_bot.json", "respaldo*", "archivo_historico", ".git", ".venv"))
-    entorno = dict(os.environ, TITAN_DATOS=str(tmp / "datos"), PYTHONDONTWRITEBYTECODE="1")
+    entorno = dict(os.environ, TITAN_DATOS=str(tmp / "datos"), PYTHONDONTWRITEBYTECODE="1", PYTHONIOENCODING="utf-8")
     entorno.pop("TITAN_CLAVE_MAESTRA", None)
     pasos = [
         ("Sintaxis de todos los módulos", [sys.executable, "-m", "compileall", "-q", "."]),
@@ -237,7 +247,7 @@ def probar():
     for nombre, cmd in pasos:
         print(f"\n=== {nombre}", flush=True)
         t0 = time.time()
-        r = subprocess.run(cmd, cwd=copia, env=entorno, capture_output=True, text=True, timeout=3600)
+        r = subprocess.run(cmd, cwd=copia, env=entorno, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3600)
         salida = (r.stdout + r.stderr).strip().splitlines()
         lineas = [ln for ln in salida if any(k in ln for k in ("RESULTADO", "Ran ", "OK", "FAIL", "Error", "FALLA", "FALLO"))]
         for ln in (lineas[-6:] if r.returncode == 0 else salida[-25:]):
@@ -253,6 +263,76 @@ def probar():
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\nRESULTADO GLOBAL: {'CORRECTO' if ok else 'CON FALLOS'} · {resumen}")
     return 0 if ok else 1
+
+
+def _opt(args, nombre, defecto=None, tipo=str):
+    if nombre in args:
+        i = args.index(nombre)
+        v = args[i + 1]
+        del args[i:i + 2]
+        return tipo(v)
+    return defecto
+
+
+def _uid():
+    fila = db.q1("SELECT id FROM usuarios ORDER BY id LIMIT 1")
+    if not fila:
+        raise SystemExit("No hay usuarios en TITAN.")
+    return fila["id"]
+
+
+def backtest_binaria(args):
+    from titan_quant.backtest_binaria import motor, recolector
+    args = list(args)
+    if not args:
+        print(__doc__)
+        return 2
+    sub = args.pop(0)
+    if sub == "recopilar" and args:
+        velas = _opt(args, "--velas", 3000, int)
+        from titan_quant import integraciones
+        from titan_quant.trader.iqoption import IQOption
+        ad = IQOption(integraciones._config(_uid(), "iqoption"))
+        ad._sesion()
+        r = recolector.recopilar_iqoption(args[0], velas)
+        p = ad.payout(args[0].upper())
+        r["payout_observado"] = p
+        r["payout_registrado"] = recolector.registrar_payout(args[0], p)
+    elif sub == "importar-sonda" and len(args) >= 2:
+        r = recolector.importar_sonda(args[0], args[1])
+    elif sub == "ejecutar" and args:
+        r = motor.ejecutar(args[0], proveedor=_opt(args, "--proveedor", "iqoption"), payout=_opt(args, "--payout", None, float),
+                           k=_opt(args, "--k", 4, int))
+        r.pop("ultimas_operaciones_calculadas", None)
+    elif sub == "informes":
+        r = motor.informes()
+    else:
+        print(__doc__)
+        return 2
+    print(json.dumps(r, ensure_ascii=False, indent=1, default=str))
+    return 0
+
+
+def backtest_ctrader(args):
+    from titan_quant.backtest_ctrader import motor, recolector
+    args = list(args)
+    if not args:
+        print(__doc__)
+        return 2
+    sub = args.pop(0)
+    if sub == "recopilar" and len(args) >= 2:
+        r = recolector.recopilar(_uid(), int(args[0]), args[1], _opt(args, "--intervalo", "15m"), _opt(args, "--dias", 60, int))
+    elif sub == "ejecutar" and args:
+        r = motor.ejecutar(args[0], intervalo=_opt(args, "--intervalo", "15m"), estrategia=_opt(args, "--estrategia", "ema_rsi_atr"),
+                           horizonte=_opt(args, "--horizonte", "intradia"), costo_por_lado_pct=_opt(args, "--costo", None, float))
+        r.pop("ultimas_operaciones_calculadas", None)
+    elif sub == "informes":
+        r = motor.informes()
+    else:
+        print(__doc__)
+        return 2
+    print(json.dumps(r, ensure_ascii=False, indent=1, default=str))
+    return 0
 
 
 def main(argv=None):
@@ -280,6 +360,13 @@ def main(argv=None):
         usuarios()
     elif cmd == "estado":
         estado()
+    elif cmd == "backtest-binaria":
+        return backtest_binaria(resto)
+    elif cmd == "backtest-ctrader":
+        return backtest_ctrader(resto)
+    elif cmd == "verificar-brokers":
+        from titan_quant import verificacion
+        return verificacion.main(resto)
     else:
         print(__doc__)
         return 2

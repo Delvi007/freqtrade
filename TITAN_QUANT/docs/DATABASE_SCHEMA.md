@@ -5,13 +5,16 @@
 | Base | Contenido | Quién escribe |
 |---|---|---|
 | `datos/titan_quant.db` (permiso 600, WAL) | Usuarios, sesiones, tokens, eventos de seguridad, credenciales cifradas, integraciones, configuración, auditoría, análisis, alertas, visibilidad y estado de motores | `titan_quant` |
-| `datos/cuentas/simulacion.db` | Bot de SIMULACIÓN: `bot_estado`, `operaciones`, `decisiones_bot`, `eventos_broker`, `saldos`, `identidad` | `trader/almacen.py` |
-| `datos/cuentas/demo.db` | Bot DEMO (cTrader demo / IQ Option PRACTICE): mismas tablas | `trader/almacen.py` |
-| `datos/cuentas/real.db` | Bot REAL (cTrader live): mismas tablas | `trader/almacen.py` |
-| `datos/conocimiento.db` | **Lo único compartido**: `resultados(ts, origen, estrategia, instrumento, horizonte, direccion, r, motivo)` — R normalizado, sin importes, saldos ni IDs | `trader/almacen.py` |
+| `datos/cuentas/demo.db` | Bot cTrader (DEMO): `bot_estado`, `operaciones` (con `fase`, `fuente_resultado`, `evidencia`), `operacion_eventos`, `decisiones_bot`, `eventos_broker`, `saldos`, `identidad` | `trader/almacen.py` |
+| `datos/cuentas/binaria.db` | Bot de binarias (IQ Option PRACTICE): mismas tablas | `trader/almacen.py` |
+| `datos/cuentas/real.db` | Cuenta REAL: BLOQUEADA por código; solo conserva el estado | `trader/almacen.py` |
+| `datos/cuentas/simulacion.db` | ARCHIVO de la simulación retirada: ya no se abre | — |
+| `datos/backtest_binaria/historico.db` | Backtesting binario: `velas_historicas` (M1 IQ Option), `payouts` observados, `informes` | `backtest_binaria` |
+| `datos/backtest_ctrader/historico.db` | Backtesting cTrader: `velas_historicas` (cTrader DEMO), `spreads` medidos, `informes` | `backtest_ctrader` |
+| `datos/conocimiento.db` | R de operaciones con resultado del broker, **siempre filtrado por origen** (demo | binaria): `resultados(ts, origen, estrategia, instrumento, horizonte, direccion, r, motivo)` — R normalizado, sin importes, saldos ni IDs | `trader/almacen.py` |
 | `titan_activos.db` (heredada) | Hipótesis del bot de Telegram, noticias por activo y escenarios | `agente.py`, `escenarios.py` |
 | `titan_planes.db` (heredada) | Planes de la web y su seguimiento | `plan_web.py` |
-| `titan_lab.db` (heredada) | Laboratorio: operaciones simuladas, decisiones, modelos, alertas y métricas | `lab_engine.py` |
+| `titan_lab.db` (heredada) | ARCHIVO del Laboratorio (simulación retirada): operaciones simuladas, decisiones, modelos, alertas y métricas | `lab_engine.py` |
 
 Lo existente no se duplica: el historial unificado lee los planes y el laboratorio directamente de sus bases, en solo lectura.
 

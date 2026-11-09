@@ -8,14 +8,19 @@
 * Stop y objetivo se envían RELATIVOS (obligatorio en órdenes a mercado), con la misma distancia porcentual
   del escenario, redondeados a los decimales del símbolo.
 * Precios, bid/ask, spread, comisiones, swap y resultado salen del propio broker.
+* DEMO por el host demo y REAL (LIVE) por el host live; una cuenta real nunca se usa en demo ni al revés. El bot REAL
+  solo llega a enviar órdenes si su interruptor LIVE está encendido (autotrader).
+* Estados: ORDER_FILLED con positionId → orden aceptada; la apertura se confirma consultando las posiciones abiertas
+  (ProtoOAReconcileReq); el resultado sale de los deals de cierre (closePositionDetail). Si la confirmación de
+  ejecución no llega (tiempo agotado o conexión caída) la orden queda SIN CONFIRMAR (OrdenNoConfirmada), nunca rechazada.
 """
 import math
 import time
 
-from .base import Adaptador, ErrorAdaptador
+from .base import Adaptador, ErrorAdaptador, OrdenNoConfirmada
 from .ctrader_ws import ESCALA, ErrorCTrader, SesionCTrader
 
-_CACHE = {}          # (entorno, ctid) -> {"t": ts, "simbolos": [...], "activos": {...}}
+_CACHE = {}          # (uid, entorno, ctid) -> {"t": ts, "simbolos": [...], "activos": {...}}
 
 
 class CTrader(Adaptador):
@@ -28,7 +33,7 @@ class CTrader(Adaptador):
     spreads = "Reales: bid/ask del broker en cada orden"
     limites_api = "Límites por aplicación de Spotware; sesiones cortas por operación"
     restricciones = "Requiere permiso 'trading'; demo y real usan hosts y bases de datos separados"
-    compatibilidad = "Probado contra un servidor cTrader simulado; validar primero en DEMO con tu cuenta"
+    compatibilidad = "Pruebas automáticas contra un servidor de pruebas local; verificación real con titan_quant.cli verificar_brokers (DEMO)"
 
     def __init__(self, uid=None, modalidad="demo", cuenta_ctid=None, simbolo_broker=None, cred=None):
         if modalidad not in ("demo", "real"):
@@ -108,7 +113,7 @@ class CTrader(Adaptador):
         return f"cTrader: {e.codigo} {e.descripcion}".strip()
 
     def _catalogo(self, s):
-        k = (self.entorno, self.ctid)
+        k = (self.uid, self.entorno, self.ctid)      # por usuario: el catálogo y las cuentas no se comparten entre usuarios
         c = _CACHE.get(k)
         if not c or time.time() - c["t"] > 3600:
             c = {"t": time.time(), "simbolos": s.simbolos(), "activos": s.activos()}
@@ -208,10 +213,19 @@ class CTrader(Adaptador):
         paso = 10 ** max(0, 5 - int(digitos))
         return max(paso, int(round(distancia * ESCALA / paso)) * paso)
 
+    def _solo_demo(self):
+        """Coherencia cuenta/entorno: DEMO solo por el host demo y REAL solo por el host live (la cuenta se comprueba al abrir).
+        El permiso para operar en REAL lo da el interruptor LIVE del autotrader, no este adaptador."""
+        if (self.modalidad, self.entorno) not in (("demo", "demo"), ("real", "live")):
+            raise ErrorAdaptador("Cuenta y entorno de cTrader no coinciden: orden bloqueada.")
+
     def abrir(self, sol):
+        self._solo_demo()
         if sol.get("tipo") != "margen":
             raise ErrorAdaptador("cTrader en TITAN opera órdenes con stop y objetivo (tipo margen).")
         s = self._abrir()
+        enviada = False
+        ref = None
         try:
             if getattr(self, "solo_lectura", False):
                 raise ErrorAdaptador("El token solo tiene permiso de lectura: vuelve a autorizar con permiso de trading.")
@@ -235,11 +249,20 @@ class CTrader(Adaptador):
             rel_s = self._relativo(d_stop, det["digitos"])
             rel_o = self._relativo(d_obj, det["digitos"]) if d_obj else None
             ref = f"TQ{int(time.time() * 1000)}"
+            enviada = True
             r = s.orden_mercado(sim["id"], lado, vol, rel_s, rel_o, "TITAN", ref, f"TITAN {self.modalidad} {sol.get('estrategia', 'fusion')}")
         except ErrorCTrader as e:
+            if enviada and e.codigo in ("TIEMPO_AGOTADO", "CONEXION"):
+                raise OrdenNoConfirmada(f"cTrader no confirmó la ejecución de la orden {ref} ({e.codigo}); revisa la cuenta DEMO") from None
             raise ErrorAdaptador(self._explicar(e)) from None
+        except (OSError, ConnectionError) as e:
+            if enviada:
+                raise OrdenNoConfirmada(f"conexión perdida tras enviar la orden {ref} ({type(e).__name__}); revisa la cuenta DEMO") from None
+            raise ErrorAdaptador(f"cTrader no disponible: {type(e).__name__}") from None
         finally:
             s.cerrar()
+        if not r.get("posicion"):
+            raise OrdenNoConfirmada(f"cTrader ejecutó la orden {ref} pero no devolvió positionId; revisa la cuenta DEMO")
         precio = float(r["precio"] or entrada)
         sg = 1 if lado == "BUY" else -1
         riesgo_ef = vol / 100 * (rel_s / ESCALA) * conv
@@ -247,7 +270,26 @@ class CTrader(Adaptador):
                 "volumen": vol, "unidades": vol / 100, "monto": vol / 100 * precio, "riesgo_importe": riesgo_ef, "moneda": moneda,
                 "stop": precio - sg * rel_s / ESCALA, "objetivo": (precio + sg * rel_o / ESCALA) if rel_o else None,
                 "fuente_precio": f"ctrader-{self.entorno}:{sim['nombre']} bid {q['bid']} ask {q['ask']}", "edad_s": q["edad_s"],
-                "simbolo_broker": sim["nombre"]}
+                "simbolo_broker": sim["nombre"],
+                "evidencia": {"broker": "ctrader", "entorno": self.entorno, "cuenta": self.ctid, "clientOrderId": ref,
+                              "positionId": r["posicion"], "ejecucion": "ORDER_FILLED", "precio_ejecucion": r["precio"],
+                              "volumen": vol, "bid": q["bid"], "ask": q["ask"]}}
+
+    def verificar_apertura(self, op):
+        """Confirmada si la posición aparece entre las posiciones abiertas de la cuenta (ProtoOAReconcileReq)."""
+        s = self._abrir()
+        try:
+            pid = int(op["id_externo"])
+            pos = next((p for p in s.posiciones() if p["id"] == pid), None)
+        except ErrorCTrader as e:
+            raise ErrorAdaptador(self._explicar(e)) from None
+        finally:
+            s.cerrar()
+        if not pos:
+            return {"confirmada": False, "detalle": f"la posición {op['id_externo']} no figura abierta en cTrader"}
+        return {"confirmada": True, "precio_entrada": float(pos["precio"]) if pos.get("precio") is not None else None,
+                "evidencia": {"fuente": "cTrader ProtoOAReconcileRes", "positionId": pid, "volumen": pos.get("volumen"),
+                              "precio": pos.get("precio"), "stop": pos.get("stop"), "objetivo": pos.get("objetivo")}}
 
     def actualizar(self, op, ahora=None):
         s = self._abrir()
@@ -272,9 +314,12 @@ class CTrader(Adaptador):
                 motivo = "stop"
             elif op.get("objetivo") and abs(c["precio_salida"] - op["objetivo"]) <= tol:
                 motivo = "objetivo"
-        return {"precio_salida": c["precio_salida"], "resultado": c["resultado"], "motivo": motivo}
+        return {"precio_salida": c["precio_salida"], "resultado": c["resultado"], "motivo": motivo,
+                "evidencia": {"fuente": "cTrader ProtoOADealListRes (closePositionDetail)", **c},
+                "evidencia_cierre": {"fuente": "cTrader: la posición ya no figura abierta", "positionId": pid}}
 
     def cerrar(self, op, motivo):
+        self._solo_demo()
         s = self._abrir()
         try:
             pid = int(op["id_externo"])
@@ -289,16 +334,77 @@ class CTrader(Adaptador):
         c = cierres.get(pid)
         if not c:
             raise ErrorAdaptador("Se pidió el cierre pero cTrader aún no confirma el resultado.")
-        return {"precio_salida": c["precio_salida"], "resultado": c["resultado"], "motivo": motivo}
+        return {"precio_salida": c["precio_salida"], "resultado": c["resultado"], "motivo": motivo,
+                "evidencia": {"fuente": "cTrader ProtoOADealListRes (closePositionDetail)", **c}}
+
+    def gestionar_stop(self, op, cfg):
+        """TRAILING STOP en el broker, solo a favor (nunca aleja el stop):
+          · al llegar a +be_r R      → stop a la entrada (+ el spread): la operación ya no puede perder
+          · desde +trail_desde_r R   → el stop persigue al precio a k·ATR de la temporalidad de la operación:
+                                       k = trail_atr_fuerte si la tendencia (EMA 50/200) sigue a favor (deja correr),
+                                       k = trail_atr_debil si la tendencia se debilita (asegura más ganancia).
+        Mantiene el objetivo. Devuelve qué hizo; el nuevo stop queda CONFIRMADO leyendo la posición en cTrader."""
+        from ..estrategias.simples import tendencia
+        from ..historico import SEG
+        from ..motores import mat
+        self._solo_demo()
+        s = self._abrir()
+        try:
+            sim, _ = self._simbolo(s, op.get("simbolo_broker") or None)
+            det = s.simbolo(sim["id"])
+            dig = int(det["digitos"] or 5)
+            pid = int(op["id_externo"])
+            pos = next((p for p in s.posiciones() if p["id"] == pid), None)
+            if not pos:
+                return {"movido": False, "motivo": "la posición ya no está abierta en cTrader"}
+            q = s.cotizacion(sim["id"])
+            tf = op.get("horizonte") if op.get("horizonte") in ("5m", "15m", "1h", "4h") else cfg.get("tf", "15m")
+            paso = SEG[tf]
+            ahora = int(time.time())
+            hasta = (ahora - ahora % paso) * 1000
+            velas = s.velas(sim["id"], tf, hasta - 300 * paso * 1000, hasta, cuenta=300)
+            h, l, c = [v[2] for v in velas], [v[3] for v in velas], [v[4] for v in velas]
+            sg = 1 if op["direccion"] == "alcista" else -1
+            entrada = float(op["precio_entrada"])
+            stop_ini = float(op.get("stop_inicial") or op["stop"])
+            riesgo = abs(entrada - stop_ini)
+            stop_act = float(pos["stop"]) if pos.get("stop") is not None else stop_ini
+            px = q["bid"] if sg > 0 else q["ask"]               # precio al que se cerraría la posición
+            prog = sg * (px - entrada) / riesgo if riesgo else 0.0
+            atr = mat.atr_serie(h, l, c, 14)[-1] if len(c) > 20 else None
+            t = tendencia(c, 50, 200)[-1] if len(c) > 210 else 0
+            a_favor = t == sg
+            cand, motivo = None, None
+            if prog >= cfg["be_r"]:
+                cand = entrada + sg * (q["ask"] - q["bid"])
+                motivo = f"+{prog:.2f} R: stop a la entrada (sin pérdida)"
+            if prog >= cfg["trail_desde_r"] and atr:
+                k = cfg["trail_atr_fuerte"] if a_favor else cfg["trail_atr_debil"]
+                c2 = px - sg * k * atr
+                if cand is None or sg * (c2 - cand) > 0:
+                    cand = c2
+                    motivo = (f"+{prog:.2f} R: trailing a {k:g}×ATR {tf} · "
+                              + ("tendencia a favor, se deja correr" if a_favor else "tendencia débil, se asegura ganancia"))
+            res = {"movido": False, "progreso_r": round(prog, 3), "stop_actual": stop_act, "tendencia_a_favor": a_favor}
+            if cand is None:
+                return res
+            cand = round(cand, dig)
+            if sg * (cand - stop_act) < 2 * 10 ** -dig or sg * (px - cand) <= 0:
+                return res                                        # no mejora el stop actual (o quedaría al otro lado del precio)
+            s.modificar_sltp(pid, cand, pos.get("objetivo"))
+            pos2 = next((p for p in s.posiciones() if p["id"] == pid), None)
+            confirmado = bool(pos2 and pos2.get("stop") is not None and abs(float(pos2["stop"]) - cand) < 10 ** -dig)
+            return {**res, "movido": confirmado, "stop_nuevo": cand, "motivo": motivo,
+                    "evidencia": {"fuente": "cTrader ProtoOAAmendPositionSLTPReq + ProtoOAReconcileRes", "positionId": pid,
+                                  "stop_anterior": stop_act, "stop_confirmado": pos2.get("stop") if pos2 else None,
+                                  "objetivo": pos2.get("objetivo") if pos2 else None, "precio": px}}
+        except ErrorCTrader as e:
+            raise ErrorAdaptador(self._explicar(e)) from None
+        finally:
+            s.cerrar()
 
     def verificar(self, op):
         try:
-            s = self._abrir()
+            return bool(self.verificar_apertura(op).get("confirmada"))
         except Exception:
             return False
-        try:
-            return int(op["id_externo"]) in {p["id"] for p in s.posiciones()}
-        except Exception:
-            return False
-        finally:
-            s.cerrar()

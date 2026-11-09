@@ -13,3 +13,6 @@ datos/
 ctrader_app.json
 oauth_tokens.json
 *.log
+
+# copias de versiones anteriores (archivadas en las copias de seguridad, no son código)
+*.previo_*

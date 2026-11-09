@@ -141,7 +141,7 @@ class TestAdaptador(BaseCT):
 
 class TestBotsSeparados(BaseCT):
     def preparar(self, mod, ctid, **extra):
-        autotrader.guardar_ajustes(self.u, mod, {"broker": "ctrader", "cuenta_ctid": ctid, "simbolo_broker": "XAUUSD", "instrumento": "GC=F",
+        autotrader.guardar_ajustes(self.u, mod, {"broker": "ctrader", "estrategia": "fusion", "cuenta_ctid": ctid, "simbolo_broker": "XAUUSD", "instrumento": "GC=F",
                                                   "riesgo_pct": 1.0, **extra})
 
     def test_demo_opera_con_velas_del_broker_cierra_y_aprende(self):
@@ -159,16 +159,19 @@ class TestBotsSeparados(BaseCT):
         self.assertIn("real del broker", ctl["spread"]["detalle"])
         self.assertNotIn("ventaja_demostrada", ctl)                                  # solo se exige en REAL
         self.assertIsNone(almacen.q1("real", "SELECT * FROM operaciones"))
-        self.assertIsNone(almacen.q1("simulacion", "SELECT * FROM operaciones"))
+        with self.assertRaises(ValueError):
+            almacen.q1("simulacion", "SELECT * FROM operaciones")                   # la simulación interna se retiró
+        self.assertEqual((op["estado"], op["fase"]), ("abierta", "abierta_confirmada"))   # confirmada en las posiciones del broker
+        self.assertEqual([e["fase"] for e in almacen.eventos("demo", op["id"])], ["orden_enviada", "orden_aceptada", "abierta_confirmada"])
         self.assertTrue(almacen.q1("demo", "SELECT * FROM saldos WHERE cuenta=?", (str(DEMO),)))
         self.assertIsNone(db.q1("SELECT * FROM operaciones"))                        # nada en la base principal
         self.W.mover(41, op["objetivo"] + 0.5, op["objetivo"] + 0.9)                  # el broker toca el objetivo
         self.assertEqual(autotrader.actualizar_abiertas(self.u, "demo"), 1)
         op = almacen.q1("demo", "SELECT * FROM operaciones WHERE id=?", (op["id"],))
-        self.assertEqual((op["estado"], op["motivo_cierre"]), ("cerrada", "objetivo"))
+        self.assertEqual((op["estado"], op["motivo_cierre"], op["fase"], op["fuente_resultado"]), ("cerrada", "objetivo", "resultado_recibido", "broker"))
         self.assertGreater(op["resultado"], 0)
         self.assertAlmostEqual(op["r"], op["resultado"] / op["riesgo_importe"])
-        k = almacen.conocimiento("fusion", "GC=F")
+        k = almacen.conocimiento("fusion", "XAUUSD")                              # nombre del símbolo tal como lo publica cTrader
         self.assertEqual((k["n"], list(k["por_origen"])), (1, ["demo"]))
         fila = dict(almacen.con_conocimiento().execute("SELECT * FROM resultados").fetchone())
         self.assertNotIn(str(DEMO), json.dumps(fila))                                # el conocimiento no lleva cuenta ni importes
@@ -186,44 +189,23 @@ class TestBotsSeparados(BaseCT):
         op = almacen.q1("demo", "SELECT * FROM operaciones")
         self.assertEqual(op["motivo_cierre"], "emergencia")
 
-    def test_real_exige_habilitacion_demo_previa_clave_y_ventaja(self):
+    def test_real_solo_con_interruptor_live_y_por_el_host_live(self):
         self.preparar("real", REAL)
-        with self.assertRaises(PermissionError):
-            autotrader.cambiar_estado(self.u, "real", "activo", confirmado_real=True)        # no habilitado
-        db.set_cfg_sistema("ultima_bateria_pruebas", {"ok": True, "resumen": "ok"})
-        req = autotrader.requisitos_real(self.u)
-        self.assertFalse(req["cumple"])                                               # falta la operación demo cTrader
-        # una operación demo completa por TITAN
-        self.preparar("demo", DEMO)
-        autotrader.cambiar_estado(self.u, "demo", "activo")
-        autotrader.ciclo(self.u, "demo", analizar_fn=self.analisis(precio=2000.20))
-        autotrader.cambiar_estado(self.u, "demo", "emergencia")
-        self.assertTrue(autotrader.requisitos_real(self.u)["cumple"])
-        with self.assertRaises(ValueError):
-            autotrader.habilitar_real(self.u, "si", True)
-        autotrader.habilitar_real(self.u, autotrader.FRASE_REAL, True)
-        with self.assertRaises(PermissionError):
-            autotrader.cambiar_estado(self.u, "real", "activo")                              # sin contraseña
-        autotrader.cambiar_estado(self.u, "real", "activo", confirmado_real=True)
-        r = autotrader.ciclo(self.u, "real", analizar_fn=self.analisis(precio=2000.20, direccion="bajista"))
-        self.assertEqual(r["accion"], "rechazar")                                       # solo 1 operación de conocimiento < 30
-        self.assertFalse(next(c for c in r["controles"] if c["control"] == "ventaja_demostrada")["ok"])
+        with almacen.tx("real") as c:                          # apagado: aunque se fuerce la base, no se envía nada al host LIVE
+            c.execute("UPDATE bot_estado SET estado='activo'")
+        self.assertEqual(autotrader.ciclo(self.u, "real", analizar_fn=self.analisis(precio=2000.20))["accion"], "bloqueado")
         self.assertEqual([o for o in self.W.ordenes if o["entorno"] == "live"], [])
-        autotrader.cambiar_estado(self.u, "real", "pausado")
-        autotrader.guardar_ajustes(self.u, "real", {"exigir_ventaja_real": False})
-        autotrader.cambiar_estado(self.u, "real", "activo", confirmado_real=True)
+        autotrader.interruptor_live(self.u, "real", True, clave_ok=True)
         r = autotrader.ciclo(self.u, "real", analizar_fn=self.analisis(precio=2000.20, direccion="bajista"))
         self.assertEqual(r["accion"], "abrir", r)
         vivas = [o for o in self.W.ordenes if o["entorno"] == "live"]
-        self.assertEqual((len(vivas), vivas[0]["ctid"], vivas[0]["tradeSide"]), (1, REAL, 2))
-        self.assertEqual(len(self.W.cuentas[REAL]["posiciones"]), 1)
+        self.assertEqual((len(vivas), vivas[0]["ctid"]), (1, REAL))
         op = almacen.q1("real", "SELECT * FROM operaciones WHERE estado='abierta'")
-        self.assertEqual((op["modalidad"], op["cuenta"]), ("real", str(REAL)))
-        self.assertAlmostEqual(op["riesgo_importe"], 20.0, delta=0.5)                  # 1 % de 2 000 USD: el saldo REAL, no el de la demo
-        self.assertIsNone(almacen.q1("demo", "SELECT * FROM operaciones WHERE estado='abierta'"))
-        res = autotrader.resumen(self.u)
-        self.assertEqual((res["real"]["abiertas"], res["demo"]["abiertas"], res["demo"]["n"]), (1, 0, 1))
-        autotrader.deshabilitar_real(self.u)
+        self.assertEqual((op["modalidad"], op["cuenta"], op["instrumento"]), ("real", str(REAL), "XAUUSD"))   # nombre del símbolo de cTrader
+        self.assertIsNone(almacen.q1("demo", "SELECT * FROM operaciones"))
+        with self.assertRaises(ErrorAdaptador):                # una cuenta DEMO nunca opera por el host live
+            CTrader(self.u, "real", DEMO, "XAUUSD").abrir({"tipo": "margen", "direccion": "alcista", "stop_dist_pct": 0.01, "riesgo_importe": 10})
+        autotrader.interruptor_live(self.u, "real", False)
         self.assertEqual(autotrader.estado(self.u, "real")["estado"], "detenido")
 
     def test_broker_caido_no_abre_y_avisa(self):
@@ -261,9 +243,12 @@ class TestBasesSeparadas(Base):
                 c.execute("""INSERT INTO operaciones(usuario_id,modalidad,broker,instrumento,mercado,tipo,direccion,monto,estado,abierta_ts)
                              VALUES(?,?,?,?,?,?,?,?,?,?)""", (u, m, "simulador" if m == "simulacion" else "iqoption", "GC=F", "x", "margen", "alcista", 10, "abierta", 1))
             c.execute("INSERT INTO bot_estado(usuario_id,estado,ajustes,actualizado_ts) VALUES(?,?,?,?)", (u, "activo", json.dumps({"modalidad": "simulacion"}), 1))
-        self.assertEqual(almacen.q1("simulacion", "SELECT COUNT(*) n FROM operaciones")["n"], 1)
         self.assertEqual(almacen.q1("demo", "SELECT COUNT(*) n FROM operaciones")["n"], 1)
+        # sin id del broker no hay prueba de ejecución: la fila antigua queda como 'error' (pendiente de conciliar), no como abierta
+        self.assertEqual(almacen.q1("demo", "SELECT estado, fase FROM operaciones"), {"estado": "error", "fase": "error_broker"})
         self.assertEqual(almacen.q1("real", "SELECT COUNT(*) n FROM operaciones")["n"], 0)
-        self.assertEqual(autotrader.estado(u, "simulacion")["estado"], "detenido")     # tras actualizar, el bot queda detenido
+        self.assertEqual(almacen.q1("binaria", "SELECT COUNT(*) n FROM operaciones")["n"], 0)   # la simulación no se copia a ninguna cuenta
+        with self.assertRaises(ValueError):
+            autotrader.estado(u, "simulacion")
         self.assertEqual(db.q1("SELECT COUNT(*) n FROM operaciones")["n"], 2)          # la copia histórica no se borra
         self.assertTrue(db.cfg_sistema("cuentas_separadas_v72"))

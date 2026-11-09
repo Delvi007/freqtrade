@@ -32,9 +32,21 @@ class MotorMacro(Motor):
             tasas = []
         altos = [e for e in ev if e.get("alto") and e.get("edad_h", 99) <= 6]
         return {"salida": {"eventos": [{k: e.get(k) for k in ("nombre", "titulo", "fuente", "fecha", "edad_h", "alto", "mecanismo", "enlace")} for e in ev[:12]],
-                           "eventos_alto_impacto_6h": len(altos), "tasas": tasas},
+                           "eventos_alto_impacto_6h": len(altos), "tasas": tasas,
+                           # Centro de noticias TITAN: fuentes primarias verificadas y calendario (contexto; no altera el veto)
+                           "centro_noticias": _centro_noticias("macro", ctx)},
                 "faltantes": ["calendario económico con consenso y hora exacta"] + ([] if tasas else ["rendimientos de bonos"]),
                 "estado": "completado" if tasas else "simplificado"}
+
+
+def _centro_noticias(motor, ctx):
+    """Noticias VERIFICADAS del centro de inteligencia de noticias relevantes para este motor y activo (registra su uso)."""
+    try:
+        from ..noticias import integracion
+        a = ctx["activo"]
+        return integracion.para_motor(motor, a.get("simbolo_proveedor") or a.get("simbolo"), ctx["p"].get("noticias_horas", 48), limite=8)
+    except Exception as e:
+        return {"noticias": [], "error": f"centro de noticias no disponible ({type(e).__name__})"}
 
 
 # --------------------------------------------------------------------------- 11
@@ -60,13 +72,15 @@ class MotorNoticias(Motor):
         punt = agente.puntaje_noticias(rel)
         notas = [] if len(rel) >= agente.MIN_NOTICIAS else [f"Solo {len(rel)} noticias relevantes: no puntúan."]
         return {"salida": {"total": len(lista), "relevantes": len(rel), "puntuacion": punt,
-                           "noticias": [{k: n.get(k) for k in ("titulo", "fuente", "fecha", "impacto", "motivo", "enlace")} for n in lista[:10]]},
+                           "noticias": [{k: n.get(k) for k in ("titulo", "fuente", "fecha", "impacto", "motivo", "enlace")} for n in lista[:10]],
+                           "centro_noticias": _centro_noticias("news", ctx)},
                 "notas": notas}
 
 
 # --------------------------------------------------------------------------- 17
 PESOS = {"technical": 0.30, "regime": 0.15, "ml": 0.20, "news": 0.10, "cross_asset": 0.10, "backtesting": 0.15}
 UMBRAL = 0.35
+UMBRAL_EXPLORACION = 0.20   # solo con modo exploraci?n activo; el modo normal sigue usando UMBRAL
 
 
 def _clip(x, a=-1.0, b=1.0):
@@ -119,7 +133,8 @@ class MotorFusion(Motor):
         usados = {k: v for k, v in votos.items() if k != "backtesting"}
         peso = sum(PESOS[k] for k in usados)
         puntuacion = sum(PESOS[k] * v for k, v in usados.items()) / peso if peso else 0.0
-        direccion = "alcista" if puntuacion >= UMBRAL else "bajista" if puntuacion <= -UMBRAL else None
+        umbral = UMBRAL_EXPLORACION if ctx.get("explorar") else UMBRAL   # exploraci?n: umbral de se?al menor
+        direccion = "alcista" if puntuacion >= umbral else "bajista" if puntuacion <= -umbral else None
 
         s = ctx["serie"]
         precio = s["c"][-1]
@@ -129,11 +144,12 @@ class MotorFusion(Motor):
         cal = dat["calidad"]
         if cal["calidad"] == "baja" or cal["obsoleto"]:
             puertas.append("datos de baja calidad u obsoletos: " + "; ".join(cal["motivos"]))
-        if reg and reg["regimen"] == "alta_volatilidad":
+        explorando = bool(ctx.get("explorar"))   # modo exploración: no bloquea por régimen, macro ni muestra (solo datos y límites)
+        if not explorando and reg and reg["regimen"] == "alta_volatilidad":
             puertas.append("régimen de alta volatilidad (percentil ≥ 90 %)")
-        if mac and mac.get("eventos_alto_impacto_6h"):
+        if not explorando and mac and mac.get("eventos_alto_impacto_6h"):
             puertas.append(f"{mac['eventos_alto_impacto_6h']} evento(s) macro de alto impacto en las últimas 6 h")
-        if ventaja_bt is False:
+        if not explorando and ventaja_bt is False:
             puertas.append("la regla no muestra ventaja fuera de muestra (≥ 20 operaciones con expectativa > 0)")
         if direccion is None:
             puertas.append(f"señal combinada insuficiente ({puntuacion:+.2f}; se exige ±{UMBRAL})")
