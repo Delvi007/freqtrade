@@ -444,8 +444,8 @@ def capital_desde_practica():
     clave = os.environ.get("IQOPTION_PASSWORD", "")
     if not email or not clave:
         raise CapitalNoFiable("faltan credenciales en esta ventana")
-    from iqoptionapi.stable_api import IQ_Option
     try:
+        from iqoptionapi.stable_api import IQ_Option
         iq = IQ_Option(email, clave)
         ok, motivo = iq.connect()
     except Exception as e:  # noqa: BLE001

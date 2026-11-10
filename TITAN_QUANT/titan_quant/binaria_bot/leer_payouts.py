@@ -60,8 +60,8 @@ def main(argv=None):
         print("Faltan credenciales en esta ventana.")
         return 2
 
-    from iqoptionapi.stable_api import IQ_Option
     try:
+        from iqoptionapi.stable_api import IQ_Option
         iq = IQ_Option(email, password)
         ok, motivo = iq.connect()
     except Exception as e:  # noqa: BLE001

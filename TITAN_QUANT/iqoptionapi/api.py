@@ -8,6 +8,7 @@ import requests
 import ssl
 import atexit
 from collections import deque
+from iqoptionapi.esperas import esperar, EsperaAgotada, HTTP_TIMEOUT
 from iqoptionapi.http.login import Login
 from iqoptionapi.http.loginv2 import Loginv2
 from iqoptionapi.http.logout import Logout
@@ -82,6 +83,28 @@ def nested_dict(n, type):
 # See: https://urllib3.readthedocs.org/en/latest/security.html
 requests.packages.urllib3.disable_warnings()  # pylint: disable=no-member
 
+
+
+_CERROJO_ENVIO = threading.Lock()
+
+
+def _sslopt_verificado():
+    """Opciones TLS con verificación de certificado y de nombre de host (CA de certifi si está instalado)."""
+    opciones = {"cert_reqs": ssl.CERT_REQUIRED, "check_hostname": True}
+    try:
+        import certifi
+        opciones["ca_certs"] = certifi.where()
+    except Exception:  # sin certifi: almacén de certificados del sistema
+        pass
+    return opciones
+
+
+def _motivo_login(response):
+    """Texto del fallo de login sin asumir que `response` sea una respuesta HTTP (puede ser una excepción)."""
+    if isinstance(response, BaseException):
+        return "Error de conexión con IQ Option: " + type(response).__name__
+    texto = getattr(response, "text", None)
+    return texto if texto else "IQ Option no devolvió la cookie de sesión."
 
 class IQOptionAPI(object):  # pylint: disable=too-many-instance-attributes
     """Class for communication with IQ Option API."""
@@ -211,7 +234,8 @@ class IQOptionAPI(object):  # pylint: disable=too-many-instance-attributes
                                         data=data,
                                         params=params,
                                         headers=headers,
-                                        proxies=self.proxies)
+                                        proxies=self.proxies,
+                                        timeout=HTTP_TIMEOUT)
         logger.debug(response)
         logger.debug(response.text)
         logger.debug(response.headers)
@@ -242,7 +266,8 @@ class IQOptionAPI(object):  # pylint: disable=too-many-instance-attributes
                                         data=data,
                                         params=params,
                                         headers=headers,
-                                        proxies=self.proxies)
+                                        proxies=self.proxies,
+                                        timeout=HTTP_TIMEOUT)
         logger.debug(response)
         logger.debug(response.text)
         logger.debug(response.headers)
@@ -271,12 +296,18 @@ class IQOptionAPI(object):  # pylint: disable=too-many-instance-attributes
         data = json.dumps(dict(name=name,
                                msg=msg, request_id=request_id))
 
-        while (global_value.ssl_Mutual_exclusion or global_value.ssl_Mutual_exclusion_write) and no_force_send:
-            pass
-        global_value.ssl_Mutual_exclusion_write = True
-        self.websocket.send(data)
+        if no_force_send:
+            try:
+                esperar(lambda: not global_value.ssl_Mutual_exclusion, timeout=10, que="fin de lectura del websocket")
+            except EsperaAgotada:
+                pass  # el lector sigue ocupado; el cerrojo de escritura basta para no mezclar tramas
+        with _CERROJO_ENVIO:
+            global_value.ssl_Mutual_exclusion_write = True
+            try:
+                self.websocket.send(data)
+            finally:
+                global_value.ssl_Mutual_exclusion_write = False
         logger.debug(data)
-        global_value.ssl_Mutual_exclusion_write = False
 
     @property
     def logout(self):
@@ -778,22 +809,23 @@ class IQOptionAPI(object):  # pylint: disable=too-many-instance-attributes
 
         self.websocket_client = WebsocketClient(self)
 
-        self.websocket_thread = threading.Thread(target=self.websocket.run_forever, kwargs={'sslopt': {
-                                                 "check_hostname": False, "cert_reqs": ssl.CERT_NONE, "ca_certs": "cacert.pem"}})  # for fix pyinstall error: cafile, capath and cadata cannot be all omitted
+        # TITAN: certificado y nombre de host VERIFICADOS. El original usaba CERT_NONE/check_hostname=False,
+        # lo que permitía a un intermediario leer el SSID (sesión de la cuenta) que se envía por este canal.
+        self.websocket_thread = threading.Thread(target=self.websocket.run_forever,
+                                                 kwargs={'sslopt': _sslopt_verificado()})
         self.websocket_thread.daemon = True
         self.websocket_thread.start()
-        while True:
-            try:
-                if global_value.check_websocket_if_error:
-                    return False, global_value.websocket_error_reason
-                if global_value.check_websocket_if_connect == 0:
-                    return False, "Websocket connection closed."
-                elif global_value.check_websocket_if_connect == 1:
-                    return True, None
-            except:
-                pass
-
-            pass
+        try:
+            esperar(lambda: global_value.check_websocket_if_error
+                    or global_value.check_websocket_if_connect in (0, 1),
+                    que="la apertura del websocket")
+        except EsperaAgotada as e:
+            return False, str(e)
+        if global_value.check_websocket_if_error:
+            return False, global_value.websocket_error_reason
+        if global_value.check_websocket_if_connect == 0:
+            return False, "Websocket connection closed."
+        return True, None
 
     # @tokensms.setter
     def setTokenSMS(self, response):
@@ -823,8 +855,10 @@ class IQOptionAPI(object):  # pylint: disable=too-many-instance-attributes
     def send_ssid(self):
         self.profile.msg = None
         self.ssid(global_value.SSID)  # pylint: disable=not-callable
-        while self.profile.msg == None:
-            pass
+        try:
+            esperar(lambda: self.profile.msg is not None, que="el perfil tras enviar la sesión")
+        except EsperaAgotada:
+            return False
         if self.profile.msg == False:
             return False
         else:
@@ -854,34 +888,37 @@ class IQOptionAPI(object):  # pylint: disable=too-many-instance-attributes
                 response = self.get_ssid()
                 try:
                     global_value.SSID = response.cookies["ssid"]
-                except:
-                    return False, response.text
+                except Exception:
+                    return False, _motivo_login(response)
                 atexit.register(self.logout)
-                self.start_websocket()
-                self.send_ssid()
+                ok, motivo = self.start_websocket()
+                if not ok:
+                    return False, motivo
+                if not self.send_ssid():
+                    return False, "IQ Option no aceptó la sesión (SSID)."
 
         # the ssid is None need get ssid
         else:
             response = self.get_ssid()
             try:
                 global_value.SSID = response.cookies["ssid"]
-            except:
+            except Exception:
                 self.close()
-                return False, response.text
+                return False, _motivo_login(response)
             atexit.register(self.logout)
-            self.send_ssid()
+            if not self.send_ssid():
+                self.close()
+                return False, "IQ Option no aceptó la sesión (SSID)."
 
         # set ssis cookie
         requests.utils.add_dict_to_cookiejar(
             self.session.cookies, {"ssid": global_value.SSID})
 
         self.timesync.server_timestamp = None
-        while True:
-            try:
-                if self.timesync.server_timestamp != None:
-                    break
-            except:
-                pass
+        try:
+            esperar(lambda: self.timesync.server_timestamp is not None, que="la hora del servidor")
+        except EsperaAgotada as e:
+            return False, str(e)
         return True, None
 
     def connect2fa(self, sms_code):

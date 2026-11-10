@@ -14,6 +14,7 @@ from iqoptionapi.expiration import get_expiration_time, get_remaning_time
 from iqoptionapi.version_control import api_version
 from datetime import datetime, timedelta
 from random import randint
+from iqoptionapi.esperas import esperar, EsperaAgotada, PAUSA_S
 
 
 def nested_dict(n, type):
@@ -107,8 +108,10 @@ class IQ_Option:
             self.re_subscribe_stream()
 
             # ---------for async get name: "position-changed", microserviceName
-            while global_value.balance_id == None:
-                pass
+            try:
+                esperar(lambda: global_value.balance_id is not None, que="el identificador de saldo")
+            except EsperaAgotada as e:
+                return False, str(e)
 
             self.position_change_all(
                 "subscribeMessage", global_value.balance_id)
@@ -277,6 +280,7 @@ class IQ_Option:
             if time.time() - start_t >= 30:
                 logging.error('**warning** get_all_init_v2 late 30 sec')
                 return None
+            time.sleep(PAUSA_S)
         return self.api.api_option_init_all_result_v2
 
         # return OP_code.ACTIVES
@@ -382,8 +386,7 @@ class IQ_Option:
     # ______________________________________self.api.getprofile() https________________________________
 
     def get_profile_ansyc(self):
-        while self.api.profile.msg == None:
-            pass
+        esperar(lambda: self.api.profile.msg is not None, que="el perfil")
         return self.api.profile.msg
 
     """def get_profile(self):
@@ -431,8 +434,7 @@ class IQ_Option:
     def get_balances(self):
         self.api.balances_raw = None
         self.api.get_balances()
-        while self.api.balances_raw == None:
-            pass
+        esperar(lambda: self.api.balances_raw is not None, que="los saldos")
         return self.api.balances_raw
 
     def get_balance_mode(self):
@@ -503,30 +505,41 @@ class IQ_Option:
 
         else:
             logging.error("ERROR doesn't have this mode")
-            exit(1)
+            raise ValueError("Modo de saldo desconocido: %r" % (Balance_MODE,))
 
     # ________________________________________________________________________
     # _______________________        CANDLE      _____________________________
     # ________________________self.api.getcandles() wss________________________
 
-    def get_candles(self, ACTIVES, interval, count, endtime):
-        self.api.candles.candles_data = None
-        while True:
+    def get_candles(self, ACTIVES, interval, count, endtime, intentos=3):
+        """Velas históricas. TITAN: espera acotada y número de reintentos limitado.
+        El original evaluaba `self.check_connect` SIN llamarlo (siempre verdadero) y reintentaba sin fin.
+        Lanza EsperaAgotada si IQ Option no entrega las velas tras `intentos` intentos."""
+        if ACTIVES not in OP_code.ACTIVES:
+            logging.error('Asset %s not found on consts', ACTIVES)
+            return None
+        ultimo_error = None
+        for intento in range(max(1, int(intentos))):
+            self.api.candles.candles_data = None
             try:
-                if ACTIVES not in OP_code.ACTIVES:
-                    print('Asset {} not found on consts'.format(ACTIVES))
-                    break
                 self.api.getcandles(
                     OP_code.ACTIVES[ACTIVES], interval, count, endtime)
-                while self.check_connect and self.api.candles.candles_data == None:
-                    pass
-                if self.api.candles.candles_data != None:
-                    break
-            except:
-                logging.error('**error** get_candles need reconnect')
-                self.connect()
-
-        return self.api.candles.candles_data
+                esperar(lambda: self.api.candles.candles_data is not None or not self.check_connect(),
+                        que="las velas de %s" % ACTIVES)
+                if self.api.candles.candles_data is not None:
+                    return self.api.candles.candles_data
+                ultimo_error = EsperaAgotada("IQ Option cerró la conexión antes de enviar las velas de %s" % ACTIVES)
+            except Exception as e:  # noqa: BLE001
+                ultimo_error = e
+            logging.error('**error** get_candles need reconnect (%s)', type(ultimo_error).__name__)
+            if intento + 1 < intentos:
+                try:
+                    self.connect()
+                except Exception:  # noqa: BLE001
+                    time.sleep(1)
+        if isinstance(ultimo_error, EsperaAgotada):
+            raise ultimo_error
+        raise EsperaAgotada("IQ Option no entregó las velas de %s (%s)" % (ACTIVES, type(ultimo_error).__name__))
 
     #######################################################
     # ______________________________________________________
@@ -822,16 +835,14 @@ class IQ_Option:
     def get_optioninfo(self, limit):
         self.api.api_game_getoptions_result = None
         self.api.get_options(limit)
-        while self.api.api_game_getoptions_result == None:
-            pass
+        esperar(lambda: self.api.api_game_getoptions_result is not None, que="el historial de opciones")
 
         return self.api.api_game_getoptions_result
 
     def get_optioninfo_v2(self, limit):
         self.api.get_options_v2_data = None
         self.api.get_options_v2(limit, "binary,turbo")
-        while self.api.get_options_v2_data == None:
-            pass
+        esperar(lambda: self.api.get_options_v2_data is not None, que="el historial de opciones v2")
 
         return self.api.get_options_v2_data
 
@@ -896,6 +907,7 @@ class IQ_Option:
             if time.time() - start_t >= 5:
                 logging.error('**warning** buy late 5 sec')
                 return False, None
+            time.sleep(PAUSA_S)
 
         return self.api.result, self.api.buy_multi_option[req_id]["id"]
 
@@ -926,6 +938,7 @@ class IQ_Option:
             if time.time() - start_t >= 5:
                 logging.error('**warning** buy late 5 sec')
                 return False, None
+            time.sleep(PAUSA_S)
 
         return self.api.result, self.api.buy_multi_option[req_id]["id"]
 

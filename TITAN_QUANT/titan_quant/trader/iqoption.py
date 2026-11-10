@@ -21,8 +21,10 @@ from .base import Adaptador, ErrorAdaptador, OrdenNoConfirmada
 
 
 def disponible():
+    """True solo si el conector puede funcionar: importar el paquete no basta, porque `iqoptionapi/__init__`
+    no carga sus dependencias (websocket-client, requests). Se importa stable_api, que sí las necesita."""
     try:
-        import iqoptionapi  # noqa: F401
+        import iqoptionapi.stable_api  # noqa: F401
         return True
     except Exception:
         return False
@@ -37,7 +39,8 @@ def _api(cred):
 
 def probar(cred):
     if not disponible():
-        raise RuntimeError("La librería iqoptionapi no está disponible. Es no oficial.")
+        raise RuntimeError("La librería iqoptionapi (no oficial) o sus dependencias no están instaladas: "
+                           "ejecuta  python -m pip install -r requirements.txt")
     api = _api(cred)
     modo = api.get_balance_mode() if hasattr(api, "get_balance_mode") else None
     if modo != "PRACTICE":
