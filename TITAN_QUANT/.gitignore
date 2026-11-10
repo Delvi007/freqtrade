@@ -1,0 +1,13 @@
+.iqoption.env
+.telegram_token
+.telegram_chat
+*.env
+*secret*
+*token*
+*.db
+*.sqlite*
+*.bak
+__pycache__/
+*.pyc
+.venv/
+venv/
