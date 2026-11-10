@@ -26,8 +26,18 @@ ESQUEMA = """
 CREATE TABLE IF NOT EXISTS ranking_tf(activo TEXT NOT NULL, intervalo TEXT NOT NULL, estrategia TEXT NOT NULL, params TEXT NOT NULL, payout REAL,
     velas INTEGER, n_total INTEGER, ev_total REAL, n_fuera INTEGER, acierto_fuera REAL, equilibrio REAL, ev_fuera REAL,
     apto INTEGER NOT NULL DEFAULT 0, motivo TEXT, actualizado_ts INTEGER NOT NULL, PRIMARY KEY(activo, intervalo, estrategia));
+CREATE TABLE IF NOT EXISTS ranking_tf_estricto(activo TEXT NOT NULL, intervalo TEXT NOT NULL, estrategia TEXT NOT NULL, params TEXT NOT NULL,
+    payout REAL, velas INTEGER, n_total INTEGER, ev_total REAL, n_fuera INTEGER, acierto_fuera REAL, equilibrio REAL, ev_fuera REAL,
+    apto INTEGER NOT NULL DEFAULT 0, motivo TEXT, actualizado_ts INTEGER NOT NULL, PRIMARY KEY(activo, intervalo, estrategia));
 CREATE TABLE IF NOT EXISTS cursor_escaner(clave TEXT PRIMARY KEY, posicion INTEGER NOT NULL, total INTEGER, ts INTEGER)
 """
+# Una tabla por criterio. Antes compartían ranking_tf (clave activo/intervalo/estrategia): el bot PRACTICE en exploración y el
+# REAL en modo evidencia, funcionando a la vez, se sobrescribían las filas y cada uno perdía las candidatas del otro.
+TABLAS = ("ranking_tf", "ranking_tf_estricto")
+
+
+def tabla(estricto):
+    return "ranking_tf_estricto" if estricto else "ranking_tf"
 
 
 def _alm():
@@ -164,7 +174,7 @@ def actualizar_ranking(api, cfg, pagos=None, ahora=None):
                     if cfg.get("tendencia"):
                         prm_g["_tendencia"] = list(cfg["tendencia"])
                     with a.tx() as c:
-                        c.execute("""INSERT OR REPLACE INTO ranking_tf(activo,intervalo,estrategia,params,payout,velas,n_total,ev_total,n_fuera,
+                        c.execute(f"""INSERT OR REPLACE INTO {tabla(cfg.get("estricto"))}(activo,intervalo,estrategia,params,payout,velas,n_total,ev_total,n_fuera,
                                      acierto_fuera,equilibrio,ev_fuera,apto,motivo,actualizado_ts) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                                   (par, tfn, est, json.dumps(prm_g), pago, len(velas), r["n_total"], r["ev_total"], r["n_fuera"], r["acierto_fuera"],
                                    r["equilibrio"], r["ev_fuera"], int(r["apto"]), r["motivo"], ahora))
@@ -174,13 +184,14 @@ def actualizar_ranking(api, cfg, pagos=None, ahora=None):
     _avanzar_cursor("binaria|turbo", pos, procesados, len(pares))
     if pares:                       # los pares que IQ Option cerró o suspendió dejan de ser aptos hasta que reabran
         with a.tx() as c:
-            c.execute("UPDATE ranking_tf SET apto=0, motivo='par cerrado/suspendido en IQ Option' WHERE apto=1 AND activo NOT IN (%s)"
-                      % ",".join("?" * len(pares)), pares)
+            for t in TABLAS:
+                c.execute(f"UPDATE {t} SET apto=0, motivo='par cerrado/suspendido en IQ Option' WHERE apto=1 AND activo NOT IN (%s)"
+                          % ",".join("?" * len(pares)), pares)
     return hechos
 
 
 def mejores(limite=5, estrategias=None, intervalos=None, tendencia=None, estricto=False):
-    sql, args = "SELECT * FROM ranking_tf WHERE apto=1", []
+    sql, args = f"SELECT * FROM {tabla(estricto)} WHERE apto=1", []
     if estricto:
         sql += " AND params LIKE ?"
         args.append('%"_criterio": "estricto"%')

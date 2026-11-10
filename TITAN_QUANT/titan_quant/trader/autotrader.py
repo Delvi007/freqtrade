@@ -225,6 +225,8 @@ def validar_ajustes(modalidad, aj):
         raise ValueError("Filtro de tendencia: la EMA rápida debe ser menor que la lenta.")
     if not out["rr_base"] <= out["rr_tendencia"] <= out["rr_max"]:
         raise ValueError("Riesgo:beneficio: debe cumplirse base ≤ con tendencia ≤ máximo (p. ej. 2 ≤ 3 ≤ 5).")
+    if out["broker"] == "ctrader":
+        out["atr_obj"] = atr_obj_coherente(out)          # backtest = objetivo base que se opera en vivo
     if out["trail_desde_r"] < out["be_r"]:
         raise ValueError("Trailing: debe empezar en o después del paso a la entrada (trail_desde_r ≥ be_r).")
     if m in REALES:                      # con dinero real nunca hay exploración ni exigencia por debajo del equilibrio
@@ -827,6 +829,16 @@ def _descartar(uid, m, aj, sol, an, ctl, fallos, motores, mercado, out):
     return out
 
 
+def atr_obj_coherente(aj):
+    """Objetivo (en ATR) con el que el backtest de cTrader debe medir la expectativa: el MISMO que se opera en vivo,
+    stop · rr_base. Antes se usaba atr_obj por separado: con atr_stop 1,5, atr_obj 2,0 y rr_base 2 el ranking validaba un
+    objetivo de 2·ATR y el bot operaba a 3·ATR (otra estrategia, con otra tasa de acierto)."""
+    if aj.get("broker") != "ctrader":
+        return aj["atr_obj"]
+    lo, hi = LIMITES["atr_obj"]
+    return min(hi, max(lo, round(float(aj["atr_stop"]) * float(aj["rr_base"]), 4)))
+
+
 def config_escaner(aj):
     """Configuración del escáner a partir de los ajustes del bot."""
     tfs = [x for x in str(aj.get("temporalidades") or aj.get("intervalo_escaner") or "15m").split(",") if x]
@@ -834,7 +846,7 @@ def config_escaner(aj):
     return {"estrategias": aj.get("estrategias_activas") or _estrategias_defecto(), "intervalo": tfs[0], "intervalos": tfs,
             "intervalos_binaria": tfb, "exploracion": bool(aj.get("modo_exploracion")) and aj.get("modalidad") not in REALES,
             "tendencia": (int(aj.get("tendencia_rapida", 50)), int(aj.get("tendencia_lenta", 200))) if aj.get("filtro_tendencia") else None,
-            "atr_stop": aj["atr_stop"], "atr_obj": aj["atr_obj"], "min_ops": aj["min_ops_bt"], "exp_min": aj["exp_min"],
+            "atr_stop": aj["atr_stop"], "atr_obj": atr_obj_coherente(aj), "min_ops": aj["min_ops_bt"], "exp_min": aj["exp_min"],
             "margen": aj["margen_bt"], "lote": aj["lote_escaner"],
             # tiempo máximo del re-backtest por ciclo: la búsqueda de señales en vivo nunca espera al aprendizaje
             "presupuesto_s": PRESUPUESTO_RANKING_S["binaria" if aj.get("broker") == "iqoption" else "ctrader"],
@@ -889,29 +901,19 @@ def _ciclo_multiactivo(uid, m, aj, ad, out, adaptador_fijo=None):
     if m in REALES or not aj.get("modo_exploracion") or n_reales >= aj["muestra_exploracion"]:
         cfg["exploracion"], cfg["estricto"] = False, True        # MODO EVIDENCIA: solo ventaja estadística demostrada
     out["fase"] = "evidencia" if cfg.get("estricto") else f"exploración ({n_reales}/{aj['muestra_exploracion']} operaciones reales)"
-    cands, hechos = [], []
+    # ORDEN: 1) señales en vivo con el ranking ya calculado, 2) envío de órdenes, 3) re-backtest (aprendizaje).
+    # Antes el re-backtest (hasta 40 s en binarias y 150 s en cTrader) iba PRIMERO y retrasaba cada entrada respecto
+    # al cierre de la vela de la señal, que es donde entra el backtest.
     try:
-        if aj["broker"] == "ctrader":
-            from ..backtest_ctrader import escaner as esc
-            ses = ad._abrir()
-            try:
-                cat = ad._catalogo(ses)["simbolos"]
-                hechos = esc.actualizar_ranking(ses, ad.entorno, cat, cfg)
-                cands = esc.senales_vivas(ses, ad.entorno, cat, cfg)
-            finally:
-                ses.cerrar()
-        else:
-            from ..backtest_binaria import escaner as escb
-            api = ad._sesion()
-            hechos = escb.actualizar_ranking(api, cfg)
-            cands = escb.senales_vivas(ad, cfg)
+        cands = _senales_multiactivo(aj, ad, cfg)
     except Exception as ex:
         decision(uid, m, None, "omitir", f"Escáner: broker no disponible: {str(ex)[:200]}")
         out["accion"] = "broker_no_disponible"
         return out
-    out["escaneados"] = [h.get("simbolo") or h.get("activo") for h in hechos]
     out["candidatas"] = len(cands)
     if not cands:
+        hechos = _ranking_multiactivo(uid, m, aj, ad, cfg)
+        out["escaneados"] = [h.get("simbolo") or h.get("activo") for h in hechos]
         resumen_txt = f"Escáner: {len(hechos)} activos re-evaluados por backtest; sin señal en los aptos"
         ult = almacen.q1(m, "SELECT motivo, ts FROM decisiones_bot WHERE usuario_id=? AND accion='omitir' ORDER BY id DESC LIMIT 1", (uid,))
         if not ult or _ahora() - ult["ts"] > 900:
@@ -923,71 +925,112 @@ def _ciclo_multiactivo(uid, m, aj, ad, out, adaptador_fijo=None):
         if len(abiertas(uid, m)) >= aj["max_abiertas"]:
             break
         simbolo = cand.get("simbolo") or cand.get("activo")
-        tf = cand.get("intervalo") or cfg["intervalo"]
-        aj2 = {**aj, "instrumento": simbolo, "simbolo_broker": simbolo, "estrategia": cand["estrategia"],
-               "horizonte": tf if aj["broker"] == "ctrader" else f"{tf}·vence 5 min"}
-        sub = {"modalidad": m, "accion": None}
         try:
-            if aj["broker"] == "ctrader":
-                from .ctrader import CTrader
-                ad_s = adaptador_fijo or CTrader(uid, m, aj.get("cuenta_ctid"), simbolo)
-                cot = ad_s.cotizacion(simbolo)
-                precio = cot["precio"]
-                sg = 1 if cand["direccion"] == "alcista" else -1
-                rr, por_que = riesgo_beneficio(aj, cand, sg)
-                stop_pct = aj["atr_stop"] * cand["atr"] / precio
-                obj_pct = stop_pct * rr
-                riesgo = aj["capital"] * aj["riesgo_pct"] / 100
-                sol = {"instrumento": simbolo, "direccion": cand["direccion"], "tipo": "margen", "monto": round(riesgo / stop_pct, 2),
-                       "riesgo_importe": riesgo, "stop": precio - sg * precio * stop_pct, "objetivo": precio + sg * precio * obj_pct,
-                       "stop_dist_pct": stop_pct, "obj_dist_pct": obj_pct, "precio_ref": cand["precio_ref"], "expira_ts": None, "payout": None,
-                       "modalidad": m, "estrategia": cand["estrategia"], "clase": None}
-                detalle = (f"{cand['estrategia']} {tf} en {simbolo} ({cand.get('descripcion') or 'cTrader'}): backtest fuera de muestra "
-                           f"{cand['exp_fuera']:+.3f} R en {cand['n_fuera']} ops · objetivo 1:{rr:g} ({por_que})"
-                           f"{' · EXPLORACIÓN' if cfg['exploracion'] else ''}")
-                an = {"ts": cand["vela_ts"], "horizonte": tf, "motores": [], "fusion": {"justificacion": [detalle]}}
-                mercado = "cTrader"
-            else:
-                ad_s = ad
-                if aj.get("capital_desde_broker", True) and hasattr(ad, "saldo"):
-                    try:                                       # capital actual del broker antes de CADA operación
-                        aj["capital"] = ad.saldo()["balance"]
-                    except Exception:                          # sin respuesta: se usa el último saldo leído de IQ Option
-                        pass
-                cot = ad.cotizacion(simbolo)
-                riesgo = aj["capital"] * aj["riesgo_pct"] / 100
-                sol = {"instrumento": simbolo, "direccion": cand["direccion"], "tipo": "binaria", "monto": round(riesgo, 2), "riesgo_importe": riesgo,
-                       "stop": None, "objetivo": None, "stop_dist_pct": None, "obj_dist_pct": None, "precio_ref": cand["precio_ref"],
-                       "expira_ts": _ahora() + 5 * 60, "payout": cand["payout"], "modalidad": m, "estrategia": cand["estrategia"], "clase": "binaria"}
-                detalle = (f"{cand['estrategia']} {tf} en {simbolo}: acierto fuera de muestra {cand['acierto_fuera']:.1%} vs equilibrio "
-                           f"{cand['equilibrio']:.1%} en {cand['n_fuera']} ops{' · EXPLORACIÓN' if cfg['exploracion'] else ''}")
-                an = {"ts": cand["vela_ts"], "horizonte": f"{tf}·5min", "motores": [], "fusion": {"justificacion": [detalle]},
-                      "binaria": {"ok": True, "payout": cand["payout"], "detalle": detalle}}
-                mercado = "binarias"
-        except Exception as ex:
-            decision(uid, m, simbolo, "rechazar", f"Sin cotización del broker: {str(ex)[:200]}")
+            resultados.append(_procesar_candidata(uid, m, aj, ad, cfg, cand, simbolo, adaptador_fijo))
+        except Exception as ex:  # noqa: BLE001 - una candidata que falla no aborta las demás
+            decision(uid, m, simbolo, "rechazar", f"Error al evaluar la señal: {type(ex).__name__}: {str(ex)[:180]}")
             resultados.append({"activo": simbolo, "accion": "rechazar"})
-            continue
-        extra = [_control_aprendizaje(m, aj, cand["estrategia"], simbolo)]
-        usados = [cand["estrategia"]]
-        if aj.get("confirmar_motores", True) and cand.get("velas"):
-            from .. import confirmacion
-            conf = confirmacion.confirmar(uid, simbolo, cand["direccion"], confirmacion.serie_desde(cand["velas"], cand.get("proveedor", aj["broker"]), simbolo, tf),
-                                          tf, aj.get("umbral_contra", 0.15), veto_macro=aj.get("veto_macro", True))
-            an["motores"] = conf["motores"]                    # el régimen de los motores también alimenta el control de volatilidad
-            an["fusion"]["justificacion"].append(conf["detalle"])
-            usados += [x["motor"] for x in conf["motores"] if x.get("estado") in ("completado", "simplificado")]
-            extra.append({"control": "confirmacion_23_motores", "ok": conf["ok"], "detalle": conf["detalle"]})
-        ctl = controles(uid, aj2, sol, cot, an, ad_s) + extra
-        fallos = [x for x in ctl if not x["ok"]]
-        if fallos:
-            r = _descartar(uid, m, aj2, sol, an, ctl, fallos, usados, mercado, sub)
-        else:
-            r = _enviar(uid, m, aj2, sol, an, ad_s, ctl, usados, mercado, sub)
-        resultados.append({"activo": simbolo, "estrategia": cand["estrategia"], "accion": r.get("accion"), "operacion_id": r.get("operacion_id")})
     out["resultados"] = resultados
     out["accion"] = "abrir" if any(x["accion"] == "abrir" for x in resultados) else (resultados[-1]["accion"] if resultados else "omitir")
+    hechos = _ranking_multiactivo(uid, m, aj, ad, cfg)
+    out["escaneados"] = [h.get("simbolo") or h.get("activo") for h in hechos]
     return out
+
+
+def _senales_multiactivo(aj, ad, cfg):
+    if aj["broker"] == "ctrader":
+        from ..backtest_ctrader import escaner as esc
+        ses = ad._abrir()
+        try:
+            cat = ad._catalogo(ses)["simbolos"]
+            return esc.senales_vivas(ses, ad.entorno, cat, cfg)
+        finally:
+            ses.cerrar()
+    from ..backtest_binaria import escaner as escb
+    return escb.senales_vivas(ad, cfg)
+
+
+def _ranking_multiactivo(uid, m, aj, ad, cfg):
+    """Re-backtest continuo del ranking. Si falla, se registra y el bot sigue (las señales ya se procesaron)."""
+    try:
+        if aj["broker"] == "ctrader":
+            from ..backtest_ctrader import escaner as esc
+            ses = ad._abrir()
+            try:
+                cat = ad._catalogo(ses)["simbolos"]
+                return esc.actualizar_ranking(ses, ad.entorno, cat, cfg)
+            finally:
+                ses.cerrar()
+        from ..backtest_binaria import escaner as escb
+        return escb.actualizar_ranking(ad._sesion(), cfg)
+    except Exception as ex:  # noqa: BLE001
+        decision(uid, m, None, "omitir", f"Escáner: no se pudo actualizar el ranking por backtest: {str(ex)[:200]}")
+        return []
+
+
+def _procesar_candidata(uid, m, aj, ad, cfg, cand, simbolo, adaptador_fijo=None):
+    """Evalúa UNA señal del escáner: cotización del broker, solicitud, controles de riesgo y envío o descarte."""
+    tf = cand.get("intervalo") or cfg["intervalo"]
+    aj2 = {**aj, "instrumento": simbolo, "simbolo_broker": simbolo, "estrategia": cand["estrategia"],
+           "horizonte": tf if aj["broker"] == "ctrader" else f"{tf}·vence 5 min"}
+    sub = {"modalidad": m, "accion": None}
+    try:
+        if aj["broker"] == "ctrader":
+            from .ctrader import CTrader
+            ad_s = adaptador_fijo or CTrader(uid, m, aj.get("cuenta_ctid"), simbolo)
+            cot = ad_s.cotizacion(simbolo)
+            precio = cot["precio"]
+            sg = 1 if cand["direccion"] == "alcista" else -1
+            rr, por_que = riesgo_beneficio(aj, cand, sg)
+            stop_pct = aj["atr_stop"] * cand["atr"] / precio
+            obj_pct = stop_pct * rr
+            riesgo = aj["capital"] * aj["riesgo_pct"] / 100
+            sol = {"instrumento": simbolo, "direccion": cand["direccion"], "tipo": "margen", "monto": round(riesgo / stop_pct, 2),
+                   "riesgo_importe": riesgo, "stop": precio - sg * precio * stop_pct, "objetivo": precio + sg * precio * obj_pct,
+                   "stop_dist_pct": stop_pct, "obj_dist_pct": obj_pct, "precio_ref": cand["precio_ref"], "expira_ts": None, "payout": None,
+                   "modalidad": m, "estrategia": cand["estrategia"], "clase": None}
+            detalle = (f"{cand['estrategia']} {tf} en {simbolo} ({cand.get('descripcion') or 'cTrader'}): backtest fuera de muestra "
+                       f"{cand['exp_fuera']:+.3f} R en {cand['n_fuera']} ops · objetivo 1:{rr:g} ({por_que})"
+                       f"{' · EXPLORACIÓN' if cfg['exploracion'] else ''}")
+            an = {"ts": cand["vela_ts"], "horizonte": tf, "motores": [], "fusion": {"justificacion": [detalle]}}
+            mercado = "cTrader"
+        else:
+            ad_s = ad
+            if aj.get("capital_desde_broker", True) and hasattr(ad, "saldo"):
+                try:                                       # capital actual del broker antes de CADA operación
+                    aj["capital"] = ad.saldo()["balance"]
+                except Exception:                          # sin respuesta: se usa el último saldo leído de IQ Option
+                    pass
+            cot = ad.cotizacion(simbolo)
+            riesgo = aj["capital"] * aj["riesgo_pct"] / 100
+            sol = {"instrumento": simbolo, "direccion": cand["direccion"], "tipo": "binaria", "monto": round(riesgo, 2), "riesgo_importe": riesgo,
+                   "stop": None, "objetivo": None, "stop_dist_pct": None, "obj_dist_pct": None, "precio_ref": cand["precio_ref"],
+                   "expira_ts": _ahora() + 5 * 60, "payout": cand["payout"], "modalidad": m, "estrategia": cand["estrategia"], "clase": "binaria"}
+            detalle = (f"{cand['estrategia']} {tf} en {simbolo}: acierto fuera de muestra {cand['acierto_fuera']:.1%} vs equilibrio "
+                       f"{cand['equilibrio']:.1%} en {cand['n_fuera']} ops{' · EXPLORACIÓN' if cfg['exploracion'] else ''}")
+            an = {"ts": cand["vela_ts"], "horizonte": f"{tf}·5min", "motores": [], "fusion": {"justificacion": [detalle]},
+                  "binaria": {"ok": True, "payout": cand["payout"], "detalle": detalle}}
+            mercado = "binarias"
+    except Exception as ex:
+        decision(uid, m, simbolo, "rechazar", f"Sin cotización del broker: {str(ex)[:200]}")
+        return {"activo": simbolo, "accion": "rechazar"}
+    extra = [_control_aprendizaje(m, aj, cand["estrategia"], simbolo), _control_vigencia(aj, cand, tf)]
+    usados = [cand["estrategia"]]
+    if aj.get("confirmar_motores", True) and cand.get("velas"):
+        from .. import confirmacion
+        conf = confirmacion.confirmar(uid, simbolo, cand["direccion"], confirmacion.serie_desde(cand["velas"], cand.get("proveedor", aj["broker"]), simbolo, tf),
+                                      tf, aj.get("umbral_contra", 0.15), veto_macro=aj.get("veto_macro", True))
+        an["motores"] = conf["motores"]                    # el régimen de los motores también alimenta el control de volatilidad
+        an["fusion"]["justificacion"].append(conf["detalle"])
+        usados += [x["motor"] for x in conf["motores"] if x.get("estado") in ("completado", "simplificado")]
+        extra.append({"control": "confirmacion_23_motores", "ok": conf["ok"], "detalle": conf["detalle"]})
+    ctl = controles(uid, aj2, sol, cot, an, ad_s) + extra
+    fallos = [x for x in ctl if not x["ok"]]
+    if fallos:
+        r = _descartar(uid, m, aj2, sol, an, ctl, fallos, usados, mercado, sub)
+    else:
+        r = _enviar(uid, m, aj2, sol, an, ad_s, ctl, usados, mercado, sub)
+    return {"activo": simbolo, "estrategia": cand["estrategia"], "accion": r.get("accion"), "operacion_id": r.get("operacion_id")}
 
 
 def ciclo(uid, modalidad, analizar_fn=None, adaptador=None):
@@ -1099,30 +1142,107 @@ def ciclo(uid, modalidad, analizar_fn=None, adaptador=None):
 
 
 # ----------------------------------------------------------------- hilo de fondo (los bots)
-_HILO = {"t": None, "parar": False, "ultimo": {}, "error": None}
+_HILO = {"t": None, "parar": False, "ultimo": {}, "error": None, "errores": {}, "trabajos": {}}
+ALINEACION_S = 2          # binarias: el ciclo arranca 2 s después del cierre de cada vela M1 (el backtest entra en ese instante)
+VENTANA_ALINEACION_S = 15  # si el planificador llega tarde dentro del minuto, aún arranca; más tarde espera al siguiente
+RELECTURA_BOTS_S = 10     # cada cuánto se releen estado y ajustes de los bots
+_L_TRABAJOS = threading.Lock()
+
+
+def toca_ciclo(m, aj, ultimo, ahora):
+    """¿Corresponde un ciclo ahora? Escáner multiactivo: ALINEADO con el reloj, ALINEACION_S segundos después de cada
+    múltiplo de ciclo_s (60 s → cierre de cada vela M1; 300 s → cierre de las velas de 5m, y por tanto de 15m, 1h y 4h).
+    Así la entrada en vivo coincide con la del backtest (apertura de la vela siguiente a la señal)."""
+    ciclo_s = max(60, int(aj.get("ciclo_s") or 60))
+    if aj.get("estrategia") == "multiactivo":
+        seg = ahora % ciclo_s
+        return ALINEACION_S <= seg < ALINEACION_S + VENTANA_ALINEACION_S and ahora - ultimo >= ciclo_s - VENTANA_ALINEACION_S - 1
+    return ahora - ultimo >= ciclo_s
+
+
+RETRASO_MAX_BINARIA_S = 30     # 10 % de una binaria de 5 min: el backtest entra en el cierre exacto de la vela de la señal
+
+
+def retraso_max_s(broker, paso):
+    """Retraso máximo admitido entre el cierre de la vela de la señal y el envío de la orden."""
+    if broker == "iqoption":
+        return RETRASO_MAX_BINARIA_S
+    return max(60, int(0.25 * paso))
+
+
+def _control_vigencia(aj, cand, tf, ahora=None):
+    """La señal se calculó para entrar en la apertura de la vela siguiente; pasado el límite, el backtest ya no la representa."""
+    if aj["broker"] == "iqoption":
+        from ..backtest_binaria.escaner import TEMPORALIDADES
+        paso = TEMPORALIDADES.get(tf, {}).get("paso", 60)
+    else:
+        from ..backtest_ctrader.escaner import SEG
+        paso = SEG.get(tf, 300)
+    if not cand.get("vela_ts"):
+        return {"control": "senal_vigente", "ok": True, "detalle": "sin marca de tiempo de la vela (no se comprueba)"}
+    retraso = (ahora or time.time()) - (int(cand["vela_ts"]) + paso)
+    lim = retraso_max_s(aj["broker"], paso)
+    return {"control": "senal_vigente", "ok": retraso <= lim,
+            "detalle": f"{retraso:.0f} s desde el cierre de la vela {tf} (máx {lim} s)"}
+
+
+def _trabajo(k, fn, *args):
+    """Ejecuta un ciclo de UN bot. Un fallo queda registrado para ese bot y no afecta a los demás."""
+    try:
+        fn(*args)
+        _HILO["errores"].pop(k, None)
+    except Exception as ex:  # noqa: BLE001
+        msg = f"{type(ex).__name__}: {ex}"[:200]
+        _HILO["errores"][k] = msg
+        _HILO["error"] = f"{k[0]}: {msg}"
+        try:
+            from ..registro import log
+            log().error("bot %s usuario %s: %s", k[0], k[1], msg)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _lanzar(k, fn, *args):
+    """Un hilo por bot (modalidad, usuario): los bots no se esperan entre sí y un bot nunca solapa dos ciclos."""
+    with _L_TRABAJOS:
+        t = _HILO["trabajos"].get(k)
+        if t and t.is_alive():
+            return False
+        t = threading.Thread(target=_trabajo, args=(k, fn) + args, name=f"titan-bot-{k[0]}-{k[1]}", daemon=True)
+        _HILO["trabajos"][k] = t
+        t.start()
+        return True
+
+
+def _leer_bots():
+    filas = []
+    for m in MODALIDADES:
+        try:
+            for r in almacen.q(m, "SELECT usuario_id, estado, ajustes FROM bot_estado WHERE estado IN ('activo','emergencia','pausado')"):
+                filas.append((m, r["usuario_id"], r["estado"], {**POR_DEFECTO[m], **json.loads(r["ajustes"] or "{}")}))
+        except Exception as ex:  # noqa: BLE001 - una base dañada no detiene a los bots de las otras cuentas
+            _HILO["error"] = f"{m}: {type(ex).__name__}: {ex}"[:200]
+    return filas
 
 
 def _bucle():
+    filas, leidas_ts = [], 0.0
     while not _HILO["parar"]:
-        try:
-            for m in MODALIDADES:
-                for r in almacen.q(m, "SELECT usuario_id, estado, ajustes FROM bot_estado WHERE estado IN ('activo','emergencia','pausado')"):
-                    uid = r["usuario_id"]
-                    aj = {**POR_DEFECTO[m], **json.loads(r["ajustes"] or "{}")}
-                    k = (m, uid)
-                    if r["estado"] in ("activo", "emergencia") and time.time() - _HILO["ultimo"].get(k, 0) >= aj["ciclo_s"]:
-                        _HILO["ultimo"][k] = time.time()
-                        ciclo(uid, m)
-                    elif time.time() - _HILO["ultimo"].get(("upd",) + k, 0) >= 60:
-                        _HILO["ultimo"][("upd",) + k] = time.time()
-                        actualizar_abiertas(uid, m)
-            _HILO["error"] = None
-        except Exception as ex:
-            _HILO["error"] = f"{type(ex).__name__}: {ex}"[:200]
-        for _ in range(15):
-            if _HILO["parar"]:
-                break
-            time.sleep(1)
+        ahora = time.time()
+        if ahora - leidas_ts >= RELECTURA_BOTS_S:
+            filas, leidas_ts = _leer_bots(), ahora
+        for m, uid, est, aj in filas:
+            k = (m, uid)
+            try:
+                if est in ("activo", "emergencia") and toca_ciclo(m, aj, _HILO["ultimo"].get(k, 0), ahora):
+                    if _lanzar(k, ciclo, uid, m):
+                        _HILO["ultimo"][k] = ahora
+                elif ahora - _HILO["ultimo"].get(("upd",) + k, 0) >= 60:
+                    if _lanzar(k, actualizar_abiertas, uid, m):
+                        _HILO["ultimo"][("upd",) + k] = ahora
+            except Exception as ex:  # noqa: BLE001
+                _HILO["error"] = f"{m}: {type(ex).__name__}: {ex}"[:200]
+        time.sleep(1)
 
 
 def iniciar_hilo():

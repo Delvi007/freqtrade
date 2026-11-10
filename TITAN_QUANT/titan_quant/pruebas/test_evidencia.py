@@ -77,7 +77,7 @@ class TestEvidenciaYAprendizaje(Base):
 
     def cand(self, **kw):
         return [{"simbolo": "XAUUSD", "id": 41, "descripcion": "Gold", "estrategia": "cruce_ema", "params": {}, "direccion": "alcista",
-                 "precio_ref": 2000.20, "atr": 2.0, "vela_ts": int(time.time()) // 3600 * 3600, "exp_fuera": 0.2, "n_fuera": 30,
+                 "precio_ref": 2000.20, "atr": 2.0, "intervalo": "1h", "vela_ts": int(time.time()) - 3600 - 5, "exp_fuera": 0.2, "n_fuera": 30,
                  "tendencia": 0, "intervalo": "1h", "velas": velas(), "proveedor": "ctrader-demo", **kw}]
 
     def ciclo(self, cand, analizar_fn):

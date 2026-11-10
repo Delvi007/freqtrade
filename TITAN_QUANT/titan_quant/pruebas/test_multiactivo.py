@@ -85,7 +85,7 @@ class TestEscanerCTrader(Base):
     def test_senal_del_escaner_se_envia_a_ctrader_con_controles_y_fases(self):
         autotrader.cambiar_estado(self.u, "demo", "activo")
         cand = [{"simbolo": "XAUUSD", "id": 1, "descripcion": "Gold", "estrategia": "cruce_ema", "params": {"rapida": 9, "lenta": 21},
-                 "direccion": "alcista", "precio_ref": 2000.20, "atr": 2.0, "vela_ts": int(time.time()) // 3600 * 3600, "exp_fuera": 0.2, "n_fuera": 30}]
+                 "direccion": "alcista", "precio_ref": 2000.20, "atr": 2.0, "intervalo": "1h", "vela_ts": int(time.time()) - 3600 - 5, "exp_fuera": 0.2, "n_fuera": 30}]
         with mock.patch("titan_quant.backtest_ctrader.escaner.senales_vivas", return_value=cand):
             r = autotrader.ciclo(self.u, "demo")
         self.assertEqual(r["resultados"][0]["accion"], "abrir", r)
@@ -303,7 +303,7 @@ class TestRiesgoBeneficioYTrailing(Base):
     def _abrir(self, tendencia):
         autotrader.cambiar_estado(self.u, "demo", "activo")
         cand = [{"simbolo": "XAUUSD", "id": 41, "descripcion": "Gold", "estrategia": "cruce_ema", "params": {"rapida": 9, "lenta": 21},
-                 "direccion": "alcista", "precio_ref": 2000.20, "atr": 2.0, "vela_ts": int(time.time()) // 3600 * 3600, "exp_fuera": 0.2,
+                 "direccion": "alcista", "precio_ref": 2000.20, "atr": 2.0, "intervalo": "1h", "vela_ts": int(time.time()) - 3600 - 5, "exp_fuera": 0.2,
                  "n_fuera": 30, "tendencia": tendencia, "intervalo": "1h"}]
         with mock.patch("titan_quant.backtest_ctrader.escaner.senales_vivas", return_value=cand),              mock.patch("titan_quant.backtest_ctrader.escaner.actualizar_ranking", return_value=[]):
             r = autotrader.ciclo(self.u, "demo")
