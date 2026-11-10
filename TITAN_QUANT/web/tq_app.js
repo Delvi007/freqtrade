@@ -129,6 +129,7 @@
   const RENOMBRAR = { brokers: '▣ Configuración e integraciones', settings: '⚙ Preferencias', analysis: '◈ Analizar mercado' };
   const TITULOS = { servidores: 'Centro de servidores', brokers_centro: 'Centro de brokers', cerebro: 'Inteligencia autónoma', noticias: 'Inteligencia de noticias', admin: 'Administración', motores: 'Motores', inteligencia: 'Inteligencia', hardware: 'Hardware', diagnostico: 'Diagnóstico', brokers: 'Configuración e integraciones', settings: 'Preferencias', analysis: 'Analizar mercado' };
   const RENDER = {};
+  window.RENDER = RENDER;   // index.html lo consulta para no lanzar sus cargadores antiguos (Historial, Alertas) sobre estas vistas
 
   // Barra superior FIJA (estilo «Centro de Inteligencia Global»): marca, un botón por módulo y estado de los bots.
   function barraSuperior() {
@@ -213,6 +214,12 @@
     if (opBtn) opBtn.remove();                                  // sustituido por una pestaña por bot
     const opOpt = $('mobileNav') && $('mobileNav').querySelector('option[value="operator"]');
     if (opOpt) opOpt.remove();
+    // Simulación interna retirada: el Laboratorio solo mostraba el archivo de la simulación anterior. Se quita de la barra
+    // (los datos archivados se conservan) y su enlace lleva a la Inteligencia autónoma, que aprende de operaciones reales del broker.
+    const labBtn = nav && nav.querySelector('[data-view="lab"]');
+    if (labBtn) labBtn.remove();
+    const labOpt = $('mobileNav') && $('mobileNav').querySelector('option[value="lab"]');
+    if (labOpt) labOpt.remove();
     const contenido = document.querySelector('.content');
     const pie = contenido && contenido.querySelector('.footer');
     NUEVAS.filter(([id]) => id !== 'admin' || TQ.usuario.admin).filter(([id]) => id !== 'diagnostico' || TQ.usuario.admin).forEach(([id, t]) => {
@@ -247,7 +254,7 @@
     if (dashBtn) dashBtn.textContent = '◈ ANALIZAR MERCADO';
     // enganchar navegación para renderizar al entrar
     const goOrig = window.go;
-    window.go = function (n) { goOrig(n); if (RENDER[n]) RENDER[n](); };
+    window.go = function (n) { if (n === 'lab') n = 'cerebro'; goOrig(n); if (RENDER[n]) RENDER[n](); };
     modoBot();
     sondearAlertas();
     setInterval(sondearAlertas, 20000);
