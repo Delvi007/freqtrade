@@ -36,6 +36,12 @@ if ! "$PY" -c "from zoneinfo import ZoneInfo; ZoneInfo('America/Santo_Domingo')"
   "$PY" -m pip install --quiet tzdata || aviso "No se pudo instalar tzdata: instala 'pkg install tzdata' o 'pip install tzdata'."
 fi
 
+if ! "$PY" -c "import websocket, requests" 2>/dev/null; then
+  aviso "Instalando dependencias del conector IQ Option (websocket-client, requests)…"
+  "$PY" -m pip install --quiet "websocket-client>=1.6,<2" "requests>=2.31,<3" \
+    || aviso "No se pudieron instalar: ejecuta 'python3 -m pip install -r TITAN_QUANT/requirements.txt'. Sin ellas el conector IQ Option no funciona."
+fi
+
 # 2) Buscar la instalación anterior (para copiar SUS DATOS, sin tocarla)
 ANTERIOR="${1:-}"
 if [ -z "$ANTERIOR" ]; then

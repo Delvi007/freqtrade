@@ -34,6 +34,12 @@ cp -r "$AQUI/TITAN_QUANT/." "$DESTINO/"
 find "$DESTINO" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null || true
 chmod +x "$DESTINO/titan.sh"
 
+# 3b) Dependencias del conector IQ Option (antes no se instalaban: el conector fallaba al conectar)
+if ! "$PY" -c "import websocket, requests" 2>/dev/null; then
+  echo "Instalando dependencias del conector IQ Option (websocket-client, requests)…"
+  "$PY" -m pip install --quiet -r "$DESTINO/requirements.txt" || echo "Aviso: no se pudieron instalar; ejecuta: $PY -m pip install -r $DESTINO/requirements.txt"
+fi
+
 # 4) Migrar bases, probar y arrancar
 cd "$DESTINO"
 "$PY" -m titan_quant.cli migrar

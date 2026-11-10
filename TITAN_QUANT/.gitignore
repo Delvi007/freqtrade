@@ -1,12 +1,21 @@
+# Secretos y datos locales (complementa el .gitignore de la raíz).
+# Patrones EXACTOS: nada de comodines tipo *token* o *secret*, que ignorarían código fuente
+# como iqoptionapi/http/token.py o conectores/ctrader/intercambiar_token.py.
 .iqoption.env
 .telegram_token
 .telegram_chat
 *.env
-*secret*
-*token*
+ctrader_app.json
+oauth_tokens.json
+.clave_maestra
+datos/
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
 *.sqlite*
 *.bak
+*.log
 __pycache__/
 *.pyc
 .venv/

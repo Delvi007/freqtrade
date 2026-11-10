@@ -1,0 +1,14 @@
+# Dependencias de TITAN QUANT.  Instalar con:  python -m pip install -r requirements.txt
+# El núcleo (servidor, bóveda, motores, backtesting) usa solo la biblioteca estándar.
+
+# Conector IQ Option (librería no oficial incluida en iqoptionapi/): sin estas dos, el conector
+# no puede abrir el websocket ni hacer login.
+websocket-client>=1.6,<2
+requests>=2.31,<3
+
+# Datos de zonas horarias: Windows no trae base de datos IANA y ZoneInfo() falla sin este paquete.
+tzdata>=2024.1
+
+# Opcional (recomendado): habilita AES-256-GCM en la bóveda de secretos. Sin él se usa el modo v1
+# (HMAC-SHA256-CTR + HMAC), igualmente autenticado. En Termux: pkg install python-cryptography
+# cryptography>=42
