@@ -140,6 +140,9 @@
     if (brand) brand.innerHTML = '<div class="tq-mark"><span>T</span></div><div><div class="tq-bname">TITAN <em>QUANT</em></div><div class="tq-bsub">INTELIGENCIA FINANCIERA GLOBAL</div></div>';
     const sep = side.querySelector('.nav .muted');
     if (sep) sep.remove();
+    // Botones de módulos: fuera del encabezado, en una barra fija horizontal abajo, a lo ancho de la pantalla.
+    const navAbajo = side.querySelector('.nav');
+    if (navAbajo) { navAbajo.classList.add('tq-navabajo'); document.body.appendChild(navAbajo); }
     const der = document.createElement('div');
     der.className = 'tq-topder';
     der.innerHTML = '<button class="tq-kill" id="tqKill" type="button" title="PARADA TOTAL: ninguna orden nueva a ningún broker">⛔ PARADA TOTAL</button><span id="tqReloj">--:--:--</span>';

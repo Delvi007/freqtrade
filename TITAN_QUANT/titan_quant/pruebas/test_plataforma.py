@@ -182,6 +182,24 @@ class TestSupervisor(Base):
             supervisor.ESTADO["pausa_por_carga"] = False
         m = supervisor.metricas()
         self.assertIn("cpu_sistema", m)
+        self.assertIn("ram_libre_mb", m)
+
+    def test_pausa_por_memoria_libre_no_por_porcentaje(self):
+        """Un equipo de 8 GB al 90 % con 800 MB libres NO debe dejar la investigación pausada para siempre."""
+        from titan_quant import supervisor
+        def paso(cpu, ram, libre):
+            with mock.patch.dict(supervisor.PROCESOS, {}, clear=True), \
+                 mock.patch.object(supervisor, "metricas", return_value={"cpu_sistema": cpu, "ram_sistema": ram, "ram_libre_mb": libre, "por_proceso": {}}):
+                supervisor.vigilar()
+            return supervisor.ESTADO["pausa_por_carga"]
+        supervisor.ESTADO["pausa_por_carga"] = False
+        self.assertFalse(paso(20, 90, 800))                 # 90 % pero con memoria libre suficiente: sigue
+        self.assertTrue(paso(20, 96, 300))                  # poca memoria libre: pausa
+        self.assertTrue(paso(20, 92, 600))                  # histéresis: aún no reanuda
+        self.assertFalse(paso(20, 90, 800))                 # reanuda aunque el porcentaje siga en 90 %
+        self.assertTrue(paso(95, 50, 3000))                 # CPU alta: pausa
+        self.assertFalse(paso(30, 50, 3000))
+        supervisor.ESTADO["pausa_por_carga"] = False
 
 
 class TestCerebro(Base):

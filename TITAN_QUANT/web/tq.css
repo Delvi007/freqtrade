@@ -226,3 +226,8 @@ label.tq-chk{display:inline-flex;align-items:center;gap:4px}
 .tqc-bk{border-top:1px solid #1b2c3c;padding:9px 0}
 .tqc-bk-cab{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 @media (max-width:600px){.tqc-racks{grid-template-columns:1fr 1fr}.tqc-bk-cab .btn{padding:4px 8px}}
+/* Barra de módulos ABAJO: fija, horizontal, a lo ancho de la pantalla (fuera del encabezado con la marca TITAN). */
+body.tq-h .side{justify-content:space-between}
+body.tq-h .nav.tq-navabajo{position:fixed;left:0;right:0;bottom:0;z-index:70;display:flex;flex-wrap:nowrap;justify-content:safe center;gap:4px;margin:0;padding:8px 12px;order:0;flex-basis:auto;overflow-x:auto;overflow-y:hidden;background:rgba(2,11,10,.96);border-top:1px solid var(--line);box-shadow:0 -6px 22px rgba(0,0,0,.45);backdrop-filter:blur(16px)}
+body.tq-h{padding-bottom:62px}
+@media(max-width:900px){body.tq-h .nav.tq-navabajo{justify-content:flex-start;padding:6px 8px}body.tq-h .nav.tq-navabajo button{padding:8px 10px;font-size:11px}}

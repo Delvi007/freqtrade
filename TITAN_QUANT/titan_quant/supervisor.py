@@ -4,8 +4,10 @@
     2 datos (velas, noticias), 3 investigación (cerebro autónomo, laboratorio). Lo crítico nunca cede recursos a lo experimental.
   · Mide en tiempo real CPU (por hilo, con psutil) y memoria del proceso y del equipo.
   · Recuperación automática: si un proceso que debe estar en marcha se cae, lo reinicia con espera creciente.
-  · Carga dinámica: si el equipo pasa del 85 % de CPU o el 90 % de RAM, PAUSA la investigación (prioridad 3) y la
-    reanuda al bajar del 60 % / 75 %. Nunca fuerza el equipo al 100 % artificialmente.
+  · Carga dinámica: si el equipo pasa del 85 % de CPU o le quedan menos de 400 MB de RAM libre, PAUSA la investigación
+    (prioridad 3) y la reanuda con CPU < 60 % y más de 700 MB libres. Se mide la memoria LIBRE real y no el porcentaje:
+    en equipos de 8 GB Windows suele estar al 85–90 % de forma normal y un umbral por porcentaje la pausaba para siempre.
+    Nunca fuerza el equipo al 100 % artificialmente.
   · Controles: iniciar, detener, pausar y reanudar cada proceso, respetando dependencias.
 """
 import threading
@@ -21,6 +23,8 @@ _PARAR = threading.Event()
 _REINICIOS = {}
 _PAUSADOS = set()
 _CPU_PREV = {"t": None, "hilos": {}}
+CPU_PAUSA, CPU_REANUDA = 85, 60            # % de CPU del equipo
+LIBRE_PAUSA, LIBRE_REANUDA = 400, 700      # MB de RAM libre del equipo
 
 
 def _evento(proceso, tipo, detalle):
@@ -112,14 +116,15 @@ def _vivo(nombre):
 
 # ------------------------------------------------------------------------------------------------ métricas reales
 def metricas():
-    out = {"cpu_sistema": None, "ram_sistema": None, "ram_proceso_mb": None, "hilos": threading.active_count(), "por_proceso": {}, "nucleos": None}
+    out = {"cpu_sistema": None, "ram_sistema": None, "ram_libre_mb": None, "ram_proceso_mb": None, "hilos": threading.active_count(), "por_proceso": {}, "nucleos": None}
     try:
         import psutil
     except ImportError:
         out["nota"] = "psutil no instalado: sin métricas de CPU/RAM"
         return out
     p = psutil.Process()
-    out.update(cpu_sistema=psutil.cpu_percent(interval=None), ram_sistema=psutil.virtual_memory().percent,
+    vm = psutil.virtual_memory()
+    out.update(cpu_sistema=psutil.cpu_percent(interval=None), ram_sistema=vm.percent, ram_libre_mb=round(vm.available / 2 ** 20),
                ram_proceso_mb=round(p.memory_info().rss / 1e6, 1), nucleos=psutil.cpu_count())
     ahora = time.time()
     tiempos = {t.id: t.user_time + t.system_time for t in p.threads()}
@@ -193,14 +198,16 @@ def vigilar():
     """Un paso de supervisión: métricas, carga dinámica y recuperación de procesos caídos."""
     m = metricas()
     ESTADO["metricas"] = m
-    cpu, ram = m.get("cpu_sistema"), m.get("ram_sistema")
+    cpu, ram, libre = m.get("cpu_sistema"), m.get("ram_sistema"), m.get("ram_libre_mb")
     if cpu is not None:
-        if not ESTADO["pausa_por_carga"] and (cpu > 85 or ram > 90):
+        if libre is None:                                    # métricas antiguas/simuladas en pruebas: deduce por porcentaje
+            libre = LIBRE_REANUDA + 1 if (ram or 0) < 90 else 0
+        if not ESTADO["pausa_por_carga"] and (cpu > CPU_PAUSA or libre < LIBRE_PAUSA):
             ESTADO["pausa_por_carga"] = True
-            _evento("sistema", "carga_alta", f"CPU {cpu} % · RAM {ram} %: se pausa la investigación (prioridad 3)")
-        elif ESTADO["pausa_por_carga"] and cpu < 60 and ram < 75:
+            _evento("sistema", "carga_alta", f"CPU {cpu} % · RAM {ram} % ({libre} MB libres): se pausa la investigación (prioridad 3)")
+        elif ESTADO["pausa_por_carga"] and cpu < CPU_REANUDA and libre > LIBRE_REANUDA:
             ESTADO["pausa_por_carga"] = False
-            _evento("sistema", "carga_normal", f"CPU {cpu} % · RAM {ram} %: se reanuda la investigación")
+            _evento("sistema", "carga_normal", f"CPU {cpu} % · RAM {ram} % ({libre} MB libres): se reanuda la investigación")
     d = deseado()
     ahora = time.time()
     for k, p in PROCESOS.items():
